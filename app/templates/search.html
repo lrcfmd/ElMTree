@@ -1,0 +1,141 @@
+<head>
+        <title>ElMTree</title>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link rel="stylesheet" href="https://lmds.liverpool.ac.uk/static/css/bootstrap4.3.1.min.css",
+		integrity="sha384-2diKOETIi1xfrzQsm1wbWyFuiEELWcgL5bZMfLj0fZPSNrBaPVYW5sZfu2hBpKve">
+	<script src="https://lmds.liverpool.ac.uk/static/js/jquery3.7.0.slim.min.js"
+                integrity="sha384-rvyZWMRtavUT1G8zTCuW4LugzPJOdVi2jP9WVPrWpdFxlgdIYoRdjSrZVn3TggiB">
+	</script>
+        <script src="https://lmds.liverpool.ac.uk/static/js/bootstrap4.3.1.min.js"
+                integrity="sha384-mevAuXmvw9v+jsSNZUMTTzm38oSCNZSYrfxu5YsAub8pBAV9ZfcdGjl7RbxIASXP">
+        </script>
+	<script src="https://lmds.liverpool.ac.uk/static/js/elmtree.js"></script>
+        <link rel="stylesheet" href="https://lmds.liverpool.ac.uk/static/css/styles.css">
+
+</head>
+
+{# 
+{{ bootstrap.load_css() }}
+{{ bootstrap.load_js() }}
+
+#}
+
+	{% include 'https://lmds.liverpool.ac.uk/static/header.html' %}
+	{% if search_result %}
+
+	<div class="container">
+
+		<div id="advanced_search_div">
+			<button onclick="closeAdvancedSearch()" id="closeAdvancedSearch">X</button>
+			<form action="" method="POST" class="form-inline">
+			{{ advanced_form.csrf_token }}
+			{{ advanced_form.search_term }}
+			<p>Return only compounds with reported crystal structures: </p>
+			{{ advanced_form.structural }}
+			<p>Exclude compounds reported in computationally derived databases: </p>
+			{{ advanced_form.experimental }}
+			<p>Select any elements that must be present in search results, separated by commas</p>
+			{{ advanced_form.must_include }}
+			<p>Select any elements that must be excluded from search results, separated by commas</p>
+			{{ advanced_form.must_exclude }}
+			{{ advanced_form.submit() }}
+			</form>
+		</div>
+
+		<div id="tooltipContainer"></div>
+
+		<div class="searchHeader d-flex flex-row row">
+			<div class="col">
+					<a href="https://lmds.liverpool.ac.uk/ElMTree">
+						<img class="searchTitle" src="https://lmds.liverpool.ac.uk/static/images/Titles/ElMTree.svg">
+					</a>
+			</div>
+
+			<div class="col justify-content-end">
+			
+					<form action="" method="POST" class="form-inline text-center">
+				
+					{{ form.csrf_token }}
+
+					{{ form.search_term }}
+					{{ form.submit(class_="submit_hidden") }}
+
+					</form>
+			</div>
+		</div>
+
+		<div class="searchBody">
+		<body>
+			<p class="search_head_text">Searched {{ "{:,}".format(n_comps) }} unique compositions across {{ "{:,}".format(n_records) }} records for <p id="composition" style="display: inline;">{{ composition }}</p> in {{ time_taken | round(3) }}s </p>
+		 <button style="display: none;" onclick="showAdvancedSearch()" class="search_head_text advanced_search">Advanced Search</button>
+		<table class="table table-hover table-striped" id="elmtree_results_table">
+			<tr>
+				<th id="composition-column-head">Composition</th> <th> Database: Matched IDs</th> <th>Distance</th>
+			</tr>
+			
+			{% for result in search_result %}
+
+			<tr> 
+				<td id="composition">
+					<div class="hover_container compound_container">
+						<p class="compound_formula"> {{ result[0] }} </p> <br><br>
+					</div> 
+					<div class="results_icon_container">
+						<img class="elmtree-result-icon" src="https://lmds.liverpool.ac.uk/static/images/ExpStrucIconThumb.png" title="Experimental Structures Reported">
+						<img class="elmtree-result-icon" src="https://lmds.liverpool.ac.uk/static/images/ExpPropIconThumb.png" title="Experimentally Characterized Properties Reported">
+						<img class="elmtree-result-icon" src="https://lmds.liverpool.ac.uk/static/images/CompPropIconThumb.png" title="Computationally Derived Properties or Structures Reported">
+					</div>
+				</td>
+				<td class="result_entry"> 
+					<div class="db-entries-list">
+						{% for db_entry in result[2] %}
+							<div class="formatted-text">
+								{{ db_entry | replace("]", "") }} 
+							</div>
+        				     {% endfor %}
+					</div>
+				</td> 
+				<td> {{ result[1] }} </td>
+			</tr>
+
+			{% endfor %}
+		</table>
+
+		</div>
+	</div>
+		
+	{% else %}
+	<body style="height:100%;">
+
+	<div class="container mainContainer align-items-center" style="height:100%;">
+		<div class="splashDiv col">
+					<img class="title" src="https://lmds.liverpool.ac.uk/static/images/Titles/ElMTree.svg">
+	<!--		<div class="splashHeader row justify-content-center">
+				<h1 class="title text-red fadeIn1" style="font-size: 120px;">El</h1>
+                                <h1 class="title text-red fadeIn2" style="font-size: 120px;">M</h1>
+                                <h1 class="title text-red fadeIn3" style="font-size: 120px;">Tree</h1>
+	</div> -->
+
+			<div class="splashDiv row justify-content-center">
+				<div class="form-inline">
+					<form action="" method="POST">
+				
+					{{ form.csrf_token }}
+					{{ form.search_term }}
+					{{ form.submit(class_="submit_hidden") }}
+
+					</form>
+				</div>
+			</div>
+		</div>
+		<p id="explanationText">Enter a chemical composition to see the 100 most similar ElMTree indexed compositions, the databases these are reported in with their associated IDs, and the ElMD distance to the query. This application was reported in <a href="">The Liverpool Materials Discovery Server: A suite of tools for the collaborative discovery of materials</a>, and implements the process described in <a href="https://pubs.acs.org/doi/10.1021/acs.chemmater.0c03381">The Earth Movers Distance as a Metric for the space of Inorganic Compositions</a>. Please consider citing these papers if you use this in your work.
+		</p>
+	</div>
+	
+	
+	</body>
+	{% endif %}
+	{% include 'https://lmds.liverpool.ac.uk/static/footer.html' %}
+
+</html>
+
