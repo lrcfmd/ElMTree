@@ -18,8 +18,10 @@ from ElMDpy import ElMD as ElMDpy
 from ElMDpy import elmd as elmdpy
 
 from logging.config import dictConfig
-from LC import LC
-from LC import Entry 
+
+from ElMTree import ElMTree
+from ElMTree import Entry 
+
 from jinja2 import BaseLoader, TemplateNotFound, ChoiceLoader
 from urllib import request, parse
 

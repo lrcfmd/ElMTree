@@ -3,50 +3,67 @@ An implementation of the list of clusters indexing method for metric spaces
 https://doi.org/10.1016/j.patrec.2004.11.014
 
 """
-from concurrent.futures import process
-from dataclasses import dataclass
+import os
 import random
-
 import bisect 
-from dataclasses import dataclass
-
 import pickle as pk
+
+from dataclasses import dataclass
+from collections import defaultdict
+
 import numpy as np
 
-from tqdm import tqdm 
 from tqdm.contrib.concurrent import process_map
-
 from scipy.spatial.distance import euclidean
 
 from ElMD import ElMD
-from functools import partial
-from collections import defaultdict
 
 def main():
-    compositions = pk.load(open("YourCompositionsAsAListOfTuplesofStringsAndIds.pk", "rb"))
+    from matminer.datasets import load_dataset
     
-    lookup = defaultdict(list)
+    df = load_dataset("matbench_expt_gap").head(2000)
+
+    compositions = [(x, i) for i, x in enumerate(df['composition'])]
+
+    elmtree_lookup = defaultdict(dict)
+    db_lookup = defaultdict(dict)
+
     elmd_compositions = []
+
+    dataset = 'matbench_expt_gap'
     
     for composition, code in compositions:
         elmd_comp = ElMD(composition)
         elmd_compositions.append(elmd_comp)
-        lookup[elmd_comp.pretty_formula].append(code)
 
-    lc = LC(elmd_compositions, ElMD("", metric="fast").elmd)
+        if dataset in elmtree_lookup[elmd_comp.pretty_formula]:
+            elmtree_lookup[elmd_comp.pretty_formula][dataset].append(code)
+        else:
+            elmtree_lookup[elmd_comp.pretty_formula][dataset] = [code]
 
-    pk.dump(elmd_compositions, open("indexedLC.pk", "wb"))
-    pk.dump(lookup, open("elmtree_lookup.pk", "wb"))
+    db_lookup[dataset]['experimental'] = True
+    db_lookup[dataset]['structures'] = False
+
+    if not os.path.exists('elmtree_lookup.pk'):
+        pk.dump(elmtree_lookup, open('elmtree_lookup.pk', 'wb'))
+
+    if not os.path.exists('db_lookup.pk'):
+        pk.dump(db_lookup, open('db_lookup.pk', 'wb'))
+
+    elmtree = ElMTree(elmd_compositions, ElMD("", metric="fast").elmd)
+
+    pk.dump(elmtree, open("indexedElMTree.pk", "wb"))
 
 
-class LC():
+class ElMTree():
     def __init__(self, points, assigned_metric=euclidean, centroid_ratio=32, on_disk=False):
         self.assigned_metric = assigned_metric
         self.centroid_ratio = centroid_ratio
         self.n = len(points)
         self.m = int(self.n / self.centroid_ratio)
-        self.on_disk = on_disk
+        self.on_disk = on_disk 
 
+        # Used for testing
         self.indexing_metric_counter = 0
         self.querying_metric_counter = 0
 
@@ -55,9 +72,9 @@ class LC():
         # and the covering radius
         self.centres = [[point, [], 0] for point in random.sample(points, k=self.m)]
 
-        # Written offline for purposes of the ElMTree
-        self.elmtree_lookup = pk.load(open("elmtree_lookup.pk", "rb"))
-        self.db_lookup = pk.load(open("db_lookup.pk", "rb"))
+        # Written in separate scripts for the ElMTree
+        self.elmtree_lookup = pk.load(open("elmtree_lookup.pk", "rb")) # Returns the dbs a composition string can be found in 
+        self.db_lookup = pk.load(open("db_lookup.pk", "rb")) # Gives the metadata about whether the db is experimental or contains structural information
 
         assignments = process_map(self.get_centroid, points, chunksize=100, max_workers=16)
 
@@ -83,7 +100,7 @@ class LC():
 
         for k, v in db_entries.items():
             if k == "compound_formula":
-                 continue
+                continue
             if self.db_lookup[k]["experimental"]:
                 experimental = True
             if self.db_lookup[k]["structures"]:
@@ -147,6 +164,9 @@ class LC():
         return ret
 
     def range_query(self, query, query_radius=2, advanced_search=None):
+        if not isinstance(query):
+            query = ElMD(query)
+
         queries = [(query, i, query_radius) for i in range(len(self.centres))]
 #         cluster_matches = process_map(self.get_matches, queries, chunksize=100)
         
@@ -161,6 +181,9 @@ class LC():
         return [(x.entry, x.distance) for x in res]
 
     def knn(self, query, k=5, advanced_search=None):
+        if not isinstance(query, ElMD):
+            query = ElMD(query)
+
         distances = [self.metric(query, centre[0]) for centre in self.centres]
         inds = np.argsort(distances)
 
