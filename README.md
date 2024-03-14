@@ -1,7 +1,7 @@
 # ElMTree
-A web application in Flask to publicly share the results of [ElMTree](https://lmds.liverpool.ac.uk/ElMTree) and [ElM2D](https://lmds.liverpool.ac.uk/ElM2D) searches. 
+An indexing class that is used in the backend of [ElMTree](https://lmds.liverpool.ac.uk/ElMTree) and [ElM2D](https://lmds.liverpool.ac.uk/ElM2D) searches. A flask application is also provided in `ElMTree/app` for hosting a simplified interface for custom searches.
 
-This may be hosted privately, but note that we may not share data contained in the pickled indexing and LC database binaries, which are necessary for the application to work. Please generate these files yourself using the associated script in `ElMTree/ElMTree.py`.
+This may be hosted privately, but note that we may not share data contained in the pickled indexing and ElMTree database binaries, which are necessary for the application to work. Please generate these files yourself using the script provided in `main()` in the file `ElMTree/ElMTree.py`.
 
 ## Installation
 
