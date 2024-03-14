@@ -14,8 +14,6 @@ from app import app, api
 from app.forms import SearchForm
 
 from ElMD import ElMD
-from ElMDpy import ElMD as ElMDpy
-from ElMDpy import elmd as elmdpy
 
 from logging.config import dictConfig
 

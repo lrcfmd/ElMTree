@@ -168,7 +168,6 @@ class ElMTree():
             query = ElMD(query)
 
         queries = [(query, i, query_radius) for i in range(len(self.centres))]
-#         cluster_matches = process_map(self.get_matches, queries, chunksize=100)
         
         cluster_matches = [self.get_matches(c) for c in queries]
             
@@ -190,7 +189,7 @@ class ElMTree():
         NN = []
         upper_bound = np.inf
 
-        # This could be parallelisable, slightly trickier with moving NN queue 
+        # This could be parallelisable... Trickier with dynamic NN queue though
         for ind in inds:
             centre = self.centres[ind]
 
