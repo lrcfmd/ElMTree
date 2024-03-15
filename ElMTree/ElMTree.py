@@ -56,7 +56,8 @@ def main():
 
 
 class ElMTree():
-    def __init__(self, points, 
+    def __init__(self, 
+                 points, # Points to be indexed, assumed ElMD objects TODO generalize?
                  assigned_metric=ElMD("", metric="fast").elmd, 
                  centroid_ratio=32, 
                  on_disk=False,
@@ -233,7 +234,7 @@ class ElMTree():
                     elif distances[ind] < leaf.distance:
                         break
 
-        return [(x.entry, x.distance) for x in NN[:k]]
+        return [(x.entry, x.distance, self.elmtree_lookup[x.entry.pretty_formula]) for x in NN[:k]]
 
 @dataclass
 class Entry:
