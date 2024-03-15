@@ -56,7 +56,13 @@ def main():
 
 
 class ElMTree():
-    def __init__(self, points, assigned_metric=euclidean, centroid_ratio=32, on_disk=False):
+    def __init__(self, points, 
+                 assigned_metric=ElMD("", metric="fast").elmd, 
+                 centroid_ratio=32, 
+                 on_disk=False,
+                 lookup_tables=False,
+                 elmtree_lookup_path=None,
+                 db_lookup_path=None):
         self.assigned_metric = assigned_metric
         self.centroid_ratio = centroid_ratio
         self.n = len(points)
@@ -72,9 +78,12 @@ class ElMTree():
         # and the covering radius
         self.centres = [[point, [], 0] for point in random.sample(points, k=self.m)]
 
-        # Written in separate scripts for the ElMTree
-        self.elmtree_lookup = pk.load(open("elmtree_lookup.pk", "rb")) # Returns the dbs a composition string can be found in 
-        self.db_lookup = pk.load(open("db_lookup.pk", "rb")) # Gives the metadata about whether the db is experimental or contains structural information
+        self.lookup_tables = lookup_tables
+
+        if lookup_tables:
+            # Written in separate scripts for the ElMTree to check which databases, and which type of db each one is
+            self.elmtree_lookup = pk.load(open(elmtree_lookup_path, "rb")) # Returns the dbs a composition string can be found in 
+            self.db_lookup = pk.load(open(db_lookup_path, "rb")) # Gives the metadata about whether the db is experimental or contains structural information
 
         assignments = process_map(self.get_centroid, points, chunksize=100, max_workers=16)
 
@@ -98,13 +107,14 @@ class ElMTree():
         experimental = False
         structure = False
 
-        for k, v in db_entries.items():
-            if k == "compound_formula":
-                continue
-            if self.db_lookup[k]["experimental"]:
-                experimental = True
-            if self.db_lookup[k]["structures"]:
-                structure = True
+        if self.lookup_tables:
+            for k, v in db_entries.items():
+                if k == "compound_formula":
+                    continue
+                if self.db_lookup[k]["experimental"]:
+                    experimental = True
+                if self.db_lookup[k]["structures"]:
+                    structure = True
 
         return Entry(point, distance, experimental, structure)
 
@@ -135,7 +145,7 @@ class ElMTree():
         # If the cluster could contain a match
         if distance <= centre[2] + query_radius:
             for leaf in centre[1]:
-                if advanced_search is not None:
+                if advanced_search is not None and self.lookup_tables:
                     if advanced_search["structures"] and not leaf.structure:
                         continue
 
@@ -195,7 +205,7 @@ class ElMTree():
 
             if ind == 0 or abs(distances[ind] - centre[2]) <= upper_bound:
                 for leaf in centre[1]:
-                    if advanced_search is not None:
+                    if advanced_search is not None and self.lookup_tables:
                         if advanced_search["structures"] and not leaf.structure:
                             continue
 
