@@ -85,8 +85,11 @@ class ElMTree():
             # Written in separate scripts for the ElMTree to check which databases, and which type of db each one is
             self.elmtree_lookup = pk.load(open(elmtree_lookup_path, "rb")) # Returns the dbs a composition string can be found in 
             self.db_lookup = pk.load(open(db_lookup_path, "rb")) # Gives the metadata about whether the db is experimental or contains structural information
-        else:
+        elif isinstance(point[0], ElMD):
             self.elmtree_lookup = {point.pretty_formula: i for i, point in enumerate(points)}
+
+        else:
+            self.elmtree_lookup = {ElMD(point).pretty_formula: i for i, point in enumerate(points)}
         
         assignments = process_map(self.get_centroid, points, chunksize=100, max_workers=16)
 
@@ -106,7 +109,10 @@ class ElMTree():
         print()
 
     def make_entry(self, point, distance):
-        db_entries = self.elmtree_lookup[point.pretty_formula]
+        if isinstance(point, ElMD):
+            db_entries = self.elmtree_lookup[point.pretty_formula]
+        else:
+            db_entries = self.elmtree_lookup[ElMD(point).pretty_formula]
         
         experimental = False
         structure = False
@@ -178,7 +184,7 @@ class ElMTree():
         return ret
 
     def range_query(self, query, query_radius=2, advanced_search=None):
-        if not isinstance(query):
+        if not isinstance(query, ElMD):
             query = ElMD(query)
 
         queries = [(query, i, query_radius) for i in range(len(self.centres))]
@@ -233,8 +239,12 @@ class ElMTree():
 
                     elif distances[ind] < leaf.distance:
                         break
-
-        return [(x.entry, x.distance, self.elmtree_lookup[x.entry.pretty_formula]) for x in NN[:k]]
+        
+        if isinstance(NN[0], ElMD):
+            return [(x.entry, x.distance, self.elmtree_lookup[x.entry.pretty_formula]) for x in NN[:k]]
+        else:
+            return [(x.entry, x.distance, self.elmtree_lookup[ElMD(x.entry).pretty_formula]) for x in NN[:k]]
+        
 
 @dataclass
 class Entry:
