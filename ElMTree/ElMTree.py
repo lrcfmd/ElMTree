@@ -84,7 +84,9 @@ class ElMTree():
             # Written in separate scripts for the ElMTree to check which databases, and which type of db each one is
             self.elmtree_lookup = pk.load(open(elmtree_lookup_path, "rb")) # Returns the dbs a composition string can be found in 
             self.db_lookup = pk.load(open(db_lookup_path, "rb")) # Gives the metadata about whether the db is experimental or contains structural information
-
+        else:
+            self.elmtree_lookup = {point.pretty_formula: i for i, point in enumerate(points)}
+        
         assignments = process_map(self.get_centroid, points, chunksize=100, max_workers=16)
 
         for point, ind, distance in assignments:
@@ -104,6 +106,7 @@ class ElMTree():
 
     def make_entry(self, point, distance):
         db_entries = self.elmtree_lookup[point.pretty_formula]
+        
         experimental = False
         structure = False
 
