@@ -93,7 +93,7 @@ class ElMTree():
         # Select m points to be our centres at random. 
         # Each list item stores the centre point object, a list of children, 
         # and the covering radius
-        self.centres = [[point, [], 0] for point in random.sample(points, k=self.m)]
+        self.centres = [[ElMD(point), [], 0] for point in random.sample(points, k=self.m)]
 
         self.lookup_tables = lookup_tables
 
@@ -107,9 +107,12 @@ class ElMTree():
             self.elmtree_lookup = {point.pretty_formula: i for i, point in enumerate(points)}
 
         else:
-            if self.verbose: print("Constructing initial lookup")
-            self.elmtree_lookup = {ElMD(point).pretty_formula: i for i, point in tqdm(enumerate(points))}
-        
+            if self.verbose: 
+                print("Constructing initial lookup")
+                self.elmtree_lookup = {ElMD(point).pretty_formula: i for i, point in tqdm(enumerate(points), total=len(points))}
+            else:
+                self.elmtree_lookup = {ElMD(point).pretty_formula: i for i, point in enumerate(points)}
+
         assignments = process_map(self.get_centroid, points, chunksize=100, max_workers=self.max_workers)
 
         for point, ind, distance in assignments:
