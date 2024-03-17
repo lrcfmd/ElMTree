@@ -13,6 +13,8 @@ from collections import defaultdict
 
 import numpy as np
 
+from tqdm import tqdm
+
 from tqdm.contrib.concurrent import process_map
 from scipy.spatial.distance import euclidean
 
@@ -24,33 +26,27 @@ def main():
     df = load_dataset("matbench_expt_gap").head(2000)
 
     compositions = [(x, i) for i, x in enumerate(df['composition'])]
+    compositions = [x[0] for x in pk.load(open('optimade_comps.pk', 'rb'))]
 
-    elmtree_lookup = defaultdict(dict)
-    db_lookup = defaultdict(dict)
+    # for composition, code in compositions:
+    #     elmd_comp = ElMD(composition)
+    #     elmd_compositions.append(elmd_comp)
 
-    elmd_compositions = []
+    #     if dataset in elmtree_lookup[elmd_comp.pretty_formula]:
+    #         elmtree_lookup[elmd_comp.pretty_formula][dataset].append(code)
+    #     else:
+    #         elmtree_lookup[elmd_comp.pretty_formula][dataset] = [code]
 
-    dataset = 'matbench_expt_gap'
-    
-    for composition, code in compositions:
-        elmd_comp = ElMD(composition)
-        elmd_compositions.append(elmd_comp)
+    # db_lookup[dataset]['experimental'] = True
+    # db_lookup[dataset]['structures'] = False
 
-        if dataset in elmtree_lookup[elmd_comp.pretty_formula]:
-            elmtree_lookup[elmd_comp.pretty_formula][dataset].append(code)
-        else:
-            elmtree_lookup[elmd_comp.pretty_formula][dataset] = [code]
+    # if not os.path.exists('elmtree_lookup.pk'):
+    #     pk.dump(elmtree_lookup, open('elmtree_lookup.pk', 'wb'))
 
-    db_lookup[dataset]['experimental'] = True
-    db_lookup[dataset]['structures'] = False
+    # if not os.path.exists('db_lookup.pk'):
+    #     pk.dump(db_lookup, open('db_lookup.pk', 'wb'))
 
-    if not os.path.exists('elmtree_lookup.pk'):
-        pk.dump(elmtree_lookup, open('elmtree_lookup.pk', 'wb'))
-
-    if not os.path.exists('db_lookup.pk'):
-        pk.dump(db_lookup, open('db_lookup.pk', 'wb'))
-
-    elmtree = ElMTree(elmd_compositions, ElMD("", metric="fast").elmd)
+    elmtree = ElMTree(compositions)
 
     pk.dump(elmtree, open("indexedElMTree.pk", "wb"))
 
@@ -63,16 +59,36 @@ class ElMTree():
                  on_disk=False,
                  lookup_tables=False,
                  elmtree_lookup_path=None,
-                 db_lookup_path=None):
+                 db_lookup_path=None,
+                 verbose=False,
+                 max_workers=None,
+                 pre_process=False):
+        
         self.assigned_metric = assigned_metric
         self.centroid_ratio = centroid_ratio
         self.n = len(points)
         self.m = int(self.n / self.centroid_ratio)
         self.on_disk = on_disk 
 
+        self.verbose = verbose
+
         # Used for testing
         self.indexing_metric_counter = 0
         self.querying_metric_counter = 0
+
+        if max_workers is None:
+            max_workers = os.cpu_count()
+
+        self.max_workers = max_workers
+
+        # Significantly faster, but can take 100s of GBs RAM for larger datasets
+        if pre_process is None:
+            if len(points) * 4 < 3000000:
+                if self.verbose: print("Preprocessing formula into ElMD objects")
+                points = [ElMD(point) for point in points]
+
+        if pre_process:
+            points = [ElMD(point) for point in points]
 
         # Select m points to be our centres at random. 
         # Each list item stores the centre point object, a list of children, 
@@ -87,12 +103,14 @@ class ElMTree():
             self.db_lookup = pk.load(open(db_lookup_path, "rb")) # Gives the metadata about whether the db is experimental or contains structural information
         
         elif isinstance(points[0], ElMD):
+            # If there are no separate db lookups, simply index each composition by its position
             self.elmtree_lookup = {point.pretty_formula: i for i, point in enumerate(points)}
 
         else:
-            self.elmtree_lookup = {ElMD(point).pretty_formula: i for i, point in enumerate(points)}
+            if self.verbose: print("Constructing initial lookup")
+            self.elmtree_lookup = {ElMD(point).pretty_formula: i for i, point in tqdm(enumerate(points))}
         
-        assignments = process_map(self.get_centroid, points, chunksize=100, max_workers=16)
+        assignments = process_map(self.get_centroid, points, chunksize=100, max_workers=self.max_workers)
 
         for point, ind, distance in assignments:
             try:
@@ -136,12 +154,16 @@ class ElMTree():
         return (point, ind, distances[ind])
 
     def metric(self, obj1, obj2, advanced_search=None):
-        """Overload the metric function to allow greater flexibility"""
+        """Overload assigned metric function to allow more flexibility"""
         # For large operations assume that the routing object is also a
         # unique filename identifier
         if self.on_disk:
             obj1 = pk.load(open(self.db_folder + str(obj1), "rb"))
             obj2 = pk.load(open(self.db_folder + str(obj2), "rb"))
+
+        if isinstance(obj1, str) or isinstance(obj2, str):
+            obj1, obj2 = ElMD(obj1), ElMD(obj2)
+            return self.assigned_metric(obj1, obj2)
 
         else:
             return self.assigned_metric(obj1, obj2)
