@@ -100,7 +100,6 @@ class ElMTree():
 
         input_compositions = self.process_input_formula(input_compositions)
 
-
         # Select m input_compositions to be our centres at random. 
         # Each list item stores the centre input_composition object, a list of children, 
         # and the covering radius
@@ -132,7 +131,7 @@ class ElMTree():
 
         assignments = process_map(self.get_centroid, input_compositions, chunksize=1000, max_workers=12)
         
-        # Seems to work in ~1128 hours
+        # Estimated in ~1128 hours single core
         # assignments = []
         # for x in tqdm(points):
         #     assignments.append(self.get_centroid(x)) 
@@ -152,7 +151,7 @@ class ElMTree():
 
         if self.verbose: print("ElMTree Constructed")
 
-    def pre_process_compositions(self, input_compositions):
+    def process_input_formula(self, input_compositions):
         """Preprocess each input into an ElMD object, to save constructing these dynamically.
            This is significantly faster, but can take 100s of GBs RAM for larger datasets"""
         if self.pre_process is None and len(input_compositions) < 20000:

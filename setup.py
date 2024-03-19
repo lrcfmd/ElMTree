@@ -3,7 +3,7 @@ from distutils.core import setup
 setup(
   name = 'ElMTreeIndex',        
   packages = ['ElMTree'],  
-  version = '0.1.6',      
+  version = '0.1.7',      
   license='GPL3',       
   description = 'A class for performing knn similarity searches on datasets of chemical formula using the ElMD metric',  
   author = 'Cameron Hagreaves',              
@@ -17,6 +17,8 @@ setup(
           'tqdm',
           'scipy',
           'ElMD>=0.5.12',
+          'pymatgen',
+          'ase'
       ],
   classifiers=[
     'Development Status :: 5 - Production/Stable',  
