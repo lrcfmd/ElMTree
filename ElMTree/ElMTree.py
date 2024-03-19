@@ -83,6 +83,7 @@ class ElMTree():
         self.m = int(self.n / self.centroid_ratio)
         self.on_disk = on_disk 
 
+        self.pre_process = pre_process
         self.verbose = verbose
 
         # Used for testing
@@ -94,11 +95,8 @@ class ElMTree():
 
         self.max_workers = max_workers
 
-        # Significantly faster, but can take 100s of GBs RAM for larger datasets
-        if pre_process is None or pre_process:
-            if len(input_compositions) < 20000:
-                if self.verbose: print("Preprocessing formula into ElMD objects")
-                input_compositions = [ElMD(input_composition) for input_composition in input_compositions]
+        input_compositions = self.process_input_formula(input_compositions)
+
 
         # Select m input_compositions to be our centres at random. 
         # Each list item stores the centre input_composition object, a list of children, 
@@ -150,6 +148,35 @@ class ElMTree():
                 continue
 
         if self.verbose: print("ElMTree Constructed")
+
+    def pre_process_compositions(self, input_compositions):
+        """Preprocess each input into an ElMD object, to save constructing these dynamically.
+           This is significantly faster, but can take 100s of GBs RAM for larger datasets"""
+        if self.pre_process is None and len(input_compositions) < 20000:
+            self.pre_process = True
+
+        if self.pre_process:
+            if self.verbose: print("Preprocessing formula into ElMD objects")
+            if isinstance(input_compositions[0], ElMD):
+                return input_compositions
+            elif isinstance(input_compositions[0], str):
+                input_compositions = [ElMD(input_composition) for input_composition in input_compositions]
+            elif isinstance(input_compositions[0], Structure):
+                input_compositions = [ElMD(input_composition.composition) for input_composition in input_compositions]
+            elif isinstance(input_compositions[0], Structure.composition):
+                input_compositions = [ElMD(input_composition) for input_composition in input_compositions]
+
+        else:
+            if isinstance(input_compositions[0], ElMD):
+                return input_compositions
+            elif isinstance(input_compositions[0], str):
+                return input_compositions
+            elif isinstance(input_compositions[0], Structure):
+                input_compositions = [input_composition.composition for input_composition in input_compositions]
+            elif isinstance(input_compositions[0], Structure.composition):
+                input_compositions = [input_composition for input_composition in input_compositions]
+
+        return input_compositions
 
     def make_entry(self, input_composition, distance):
         if isinstance(input_composition, ElMD):
