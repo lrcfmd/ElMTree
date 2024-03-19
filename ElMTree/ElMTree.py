@@ -19,7 +19,10 @@ from tqdm.contrib.concurrent import process_map
 from scipy.spatial.distance import euclidean
 
 from ElMD import ElMD
+
 from pymatgen.core import Structure
+from ase import Atoms
+
 import pandas as pd
 
 def main():
@@ -165,6 +168,8 @@ class ElMTree():
                 input_compositions = [ElMD(input_composition.composition) for input_composition in input_compositions]
             elif isinstance(input_compositions[0], Structure.composition):
                 input_compositions = [ElMD(input_composition) for input_composition in input_compositions]
+            elif isinstance(input_compositions[0], Atoms):
+                input_compositions = [ElMD(input_composition.get_chemical_symbols()) for input_composition in input_compositions]
 
         else:
             if isinstance(input_compositions[0], ElMD):
@@ -175,6 +180,8 @@ class ElMTree():
                 input_compositions = [input_composition.composition for input_composition in input_compositions]
             elif isinstance(input_compositions[0], Structure.composition):
                 input_compositions = [input_composition for input_composition in input_compositions]
+            elif isinstance(input_compositions[0], Atoms):
+                input_compositions = [input_composition.get_chemical_symbols() for input_composition in input_compositions]
 
         return input_compositions
 
