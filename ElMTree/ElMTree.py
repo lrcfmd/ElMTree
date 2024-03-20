@@ -134,30 +134,6 @@ class ElMTree():
             if self.verbose: print("Preprocessing formula into ElMD objects")
 
             return [self.convert_to_ElMD(x) for x in tqdm(input_compositions)]
-        
-            # if isinstance(input_compositions[0], ElMD):
-            #     return input_compositions
-            # elif isinstance(input_compositions[0], str):
-            #     input_compositions = [ElMD(input_composition) for input_composition in input_compositions]
-            # elif isinstance(input_compositions[0], Structure):
-            #     input_compositions = [ElMD(str(input_composition.composition)) for input_composition in input_compositions]
-            # elif isinstance(input_compositions[0], Composition):
-            #     input_compositions = [ElMD(str(input_composition)) for input_composition in input_compositions]
-            # elif isinstance(input_compositions[0], Atoms):
-            #     input_compositions = [ElMD(input_composition.get_chemical_symbols()) for input_composition in input_compositions]
-
-        # else:
-        #     return [self.convert_to_ElMD(x) for x in tqdm(input_compositions)]
-        #     if isinstance(input_compositions[0], ElMD):
-        #         return input_compositions
-        #     elif isinstance(input_compositions[0], str):
-        #         return input_compositions
-        #     elif isinstance(input_compositions[0], Structure):
-        #         input_compositions = [str(input_composition.composition) for input_composition in input_compositions]
-        #     elif isinstance(input_compositions[0], Composition):
-        #         input_compositions = [str(input_composition) for input_composition in input_compositions]
-        #     elif isinstance(input_compositions[0], Atoms):
-        #         input_compositions = [input_composition.get_chemical_symbols() for input_composition in input_compositions]
 
         return input_compositions
 
