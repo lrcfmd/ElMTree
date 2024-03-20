@@ -31,35 +31,8 @@ def main():
     df = load_dataset("matbench_expt_gap").head(2000)
 
     compositions = [x for i, x in enumerate(df['composition'])]
-    # compositions = [x[0] for x in pk.load(open('data/optimade_comps.pk', 'rb'))]
 
-    # for composition, code in compositions:
-    #     elmd_comp = ElMD(composition)
-    #     elmd_compositions.append(elmd_comp)
-
-    #     if dataset in elmtree_lookup[elmd_comp.pretty_formula]:
-    #         elmtree_lookup[elmd_comp.pretty_formula][dataset].append(code)
-    #     else:
-    #         elmtree_lookup[elmd_comp.pretty_formula][dataset] = [code]
-
-    # db_lookup[dataset]['experimental'] = True
-    # db_lookup[dataset]['structures'] = False
-
-    # if not os.path.exists('elmtree_lookup.pk'):
-    #     pk.dump(elmtree_lookup, open('elmtree_lookup.pk', 'wb'))
-
-    # if not os.path.exists('db_lookup.pk'):
-    #     pk.dump(db_lookup, open('db_lookup.pk', 'wb'))
-
-    df_names  = ['df_outputs_filtout_v1', 'df_outputs_filtout_v6', 'df_outputs_v5', 'df_outputs_v6']
-    dfs = [pd.read_pickle('data/' + x + '.pkl') for x in df_names]
-
-    re2fractive_comps, dataset_identifier = zip(*[(str(Structure.from_dict(x).composition), i) for i, df in enumerate(dfs) for x in df['structure']])
-    optimade_comps = [x[0] for x in pk.load(open('data/optimade_comps.pk', 'rb'))][:1000]
-
-    compositions = optimade_comps + list(re2fractive_comps)
-
-    elmtree = ElMTree(compositions, verbose=True)
+    elmtree = ElMTree(compositions, verbose=True, pre_process=True)
 
     x = elmtree.knn(compositions[0])
     print(x)
@@ -159,28 +132,32 @@ class ElMTree():
 
         if self.pre_process:
             if self.verbose: print("Preprocessing formula into ElMD objects")
-            if isinstance(input_compositions[0], ElMD):
-                return input_compositions
-            elif isinstance(input_compositions[0], str):
-                input_compositions = [ElMD(input_composition) for input_composition in input_compositions]
-            elif isinstance(input_compositions[0], Structure):
-                input_compositions = [ElMD(input_composition.composition) for input_composition in input_compositions]
-            elif isinstance(input_compositions[0], Structure.composition):
-                input_compositions = [ElMD(input_composition) for input_composition in input_compositions]
-            elif isinstance(input_compositions[0], Atoms):
-                input_compositions = [ElMD(input_composition.get_chemical_symbols()) for input_composition in input_compositions]
 
-        else:
-            if isinstance(input_compositions[0], ElMD):
-                return input_compositions
-            elif isinstance(input_compositions[0], str):
-                return input_compositions
-            elif isinstance(input_compositions[0], Structure):
-                input_compositions = [input_composition.composition for input_composition in input_compositions]
-            elif isinstance(input_compositions[0], Structure.composition):
-                input_compositions = [input_composition for input_composition in input_compositions]
-            elif isinstance(input_compositions[0], Atoms):
-                input_compositions = [input_composition.get_chemical_symbols() for input_composition in input_compositions]
+            return [self.convert_to_ElMD(x) for x in tqdm(input_compositions)]
+        
+            # if isinstance(input_compositions[0], ElMD):
+            #     return input_compositions
+            # elif isinstance(input_compositions[0], str):
+            #     input_compositions = [ElMD(input_composition) for input_composition in input_compositions]
+            # elif isinstance(input_compositions[0], Structure):
+            #     input_compositions = [ElMD(str(input_composition.composition)) for input_composition in input_compositions]
+            # elif isinstance(input_compositions[0], Composition):
+            #     input_compositions = [ElMD(str(input_composition)) for input_composition in input_compositions]
+            # elif isinstance(input_compositions[0], Atoms):
+            #     input_compositions = [ElMD(input_composition.get_chemical_symbols()) for input_composition in input_compositions]
+
+        # else:
+        #     return [self.convert_to_ElMD(x) for x in tqdm(input_compositions)]
+        #     if isinstance(input_compositions[0], ElMD):
+        #         return input_compositions
+        #     elif isinstance(input_compositions[0], str):
+        #         return input_compositions
+        #     elif isinstance(input_compositions[0], Structure):
+        #         input_compositions = [str(input_composition.composition) for input_composition in input_compositions]
+        #     elif isinstance(input_compositions[0], Composition):
+        #         input_compositions = [str(input_composition) for input_composition in input_compositions]
+        #     elif isinstance(input_compositions[0], Atoms):
+        #         input_compositions = [input_composition.get_chemical_symbols() for input_composition in input_compositions]
 
         return input_compositions
 
@@ -205,45 +182,68 @@ class ElMTree():
         return Entry(input_composition, distance, experimental, structure)
 
     def get_centroid(self, input_composition):
-        # if self.verbose: print("Computing distances to each centroid")
         input_composition = ElMD(input_composition)
 
         distances = [self.metric(input_composition, centre[0]) for centre in self.centres]
         ind = np.argsort(distances)[0]
 
         return (input_composition, ind, distances[ind])
+    
+    def convert_to_ElMD(self, object):
+        if isinstance(object, ElMD):
+            return object
+        elif isinstance(object, str):
+            object = ElMD(object)
+
+        elif isinstance(object, Structure):
+            object = ElMD(str(object.composition))
+
+        elif isinstance(object, Composition):
+            object = ElMD(str(object))
+
+        elif isinstance(object, Atoms):
+            object = ElMD(object.get_chemical_symbols())
+
+        else:
+            raise Exception("Incorrect input type, must be one of ElMD, str, pymatgen.core.structure.Structure, pymatgen.core.structure.Composition, or ase.Atoms")
+        
+        return object
+
 
     def metric(self, obj1, obj2, advanced_search=None):
         """Overload assigned metric function to allow more flexibility"""
-        # For large operations assume that the routing object is also a
+        # For large operations assume that the routing object is a
         # unique filename identifier
         if self.on_disk:
             obj1 = pk.load(open(self.db_folder + str(obj1), "rb"))
             obj2 = pk.load(open(self.db_folder + str(obj2), "rb"))
 
-        if isinstance(obj1, str):
-            obj1 = ElMD(obj1)
+        obj1 = self.convert_to_ElMD(obj1)
+        obj2 = self.convert_to_ElMD(obj2)
 
-        elif isinstance(obj1, Structure):
-            obj1 = ElMD(str(obj1.composition))
+        # if isinstance(obj1, str):
+        #     obj1 = ElMD(obj1)
 
-        elif isinstance(obj1, Composition):
-            obj1 = ElMD(str(obj1))
+        # elif isinstance(obj1, Structure):
+        #     obj1 = ElMD(str(obj1.composition))
 
-        elif isinstance(obj1, Atoms):
-            obj1 = ElMD(obj1.get_chemical_symbols())
+        # elif isinstance(obj1, Composition):
+        #     obj1 = ElMD(str(obj1))
 
-        if isinstance(obj2, str):
-            obj2 = ElMD(obj2)
+        # elif isinstance(obj1, Atoms):
+        #     obj1 = ElMD(obj1.get_chemical_symbols())
 
-        elif isinstance(obj2, Structure):
-            obj2 = ElMD(str(obj2.composition))
+        # if isinstance(obj2, str):
+        #     obj2 = ElMD(obj2)
 
-        elif isinstance(obj2, Composition):
-            obj2 = ElMD(str(obj2))
+        # elif isinstance(obj2, Structure):
+        #     obj2 = ElMD(str(obj2.composition))
 
-        elif isinstance(obj2, Atoms):
-            obj2 = ElMD(obj2.get_chemical_symbols())   
+        # elif isinstance(obj2, Composition):
+        #     obj2 = ElMD(str(obj2))
+
+        # elif isinstance(obj2, Atoms):
+        #     obj2 = ElMD(obj2.get_chemical_symbols())   
 
         return self.assigned_metric(obj1, obj2)
 
