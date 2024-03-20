@@ -195,31 +195,7 @@ class ElMTree():
             obj2 = pk.load(open(self.db_folder + str(obj2), "rb"))
 
         obj1 = self.convert_to_ElMD(obj1)
-        obj2 = self.convert_to_ElMD(obj2)
-
-        # if isinstance(obj1, str):
-        #     obj1 = ElMD(obj1)
-
-        # elif isinstance(obj1, Structure):
-        #     obj1 = ElMD(str(obj1.composition))
-
-        # elif isinstance(obj1, Composition):
-        #     obj1 = ElMD(str(obj1))
-
-        # elif isinstance(obj1, Atoms):
-        #     obj1 = ElMD(obj1.get_chemical_symbols())
-
-        # if isinstance(obj2, str):
-        #     obj2 = ElMD(obj2)
-
-        # elif isinstance(obj2, Structure):
-        #     obj2 = ElMD(str(obj2.composition))
-
-        # elif isinstance(obj2, Composition):
-        #     obj2 = ElMD(str(obj2))
-
-        # elif isinstance(obj2, Atoms):
-        #     obj2 = ElMD(obj2.get_chemical_symbols())   
+        obj2 = self.convert_to_ElMD(obj2) 
 
         return self.assigned_metric(obj1, obj2)
 
