@@ -28,13 +28,11 @@ import pandas as pd
 def main():
     from matminer.datasets import load_dataset
     
-    df = load_dataset("matbench_expt_gap").head(2000)
+    df = load_dataset("matbench_expt_gap")
 
-    compositions = [x for i, x in enumerate(df['composition'])]
+    elmtree = ElMTree(df['composition'], verbose=True, pre_process=True)
 
-    elmtree = ElMTree(compositions, verbose=True, pre_process=True)
-
-    x = elmtree.knn(compositions[0])
+    x = elmtree.knn(df['composition'][0])[:5]
     print(x)
 
     pk.dump(elmtree, open("indexedElMTree.pk", "wb"))
@@ -45,6 +43,7 @@ class ElMTree():
                  input_compositions, # input_compositions to be indexed, assumed ElMD objects TODO generalize?
                  assigned_metric=ElMD("", metric="fast").elmd, 
                  centroid_ratio=32, 
+                 k=50,
                  on_disk=False,
                  lookup_tables=False,
                  elmtree_lookup_path=None,
@@ -57,6 +56,7 @@ class ElMTree():
         self.centroid_ratio = centroid_ratio
         self.n = len(input_compositions)
         self.m = int(self.n / self.centroid_ratio)
+        self.k = k
         self.on_disk = on_disk 
 
         self.pre_process = pre_process
@@ -86,7 +86,7 @@ class ElMTree():
         if self.verbose: print("Updating composition index lookup")
 
         if lookup_tables:
-            # Written in separate scripts for the ElMTree to check which databases, and which type of db each one is
+            # Written in separate scripts for the ElMTree to check which databases, and which type of db each one is for advanced searches
             self.elmtree_lookup = pk.load(open(elmtree_lookup_path, "rb")) # Returns the dbs a composition string can be found in 
             self.db_lookup = pk.load(open(db_lookup_path, "rb")) # Gives the metadata about whether the db is experimental or contains structural information
         
@@ -253,7 +253,14 @@ class ElMTree():
 
         return [(x.entry, x.distance) for x in res]
 
-    def knn(self, query, k=200, advanced_search=None):
+    def knn(self, query, k=None, advanced_search=None):
+        if k is None:
+            k = self.k
+        if isinstance(query, list):
+            if self.verbose: print("Mapping knn query to processes for list of formalae input")
+
+            return process_map(self.knn, query, chunksize=1000)
+        
         if not isinstance(query, ElMD):
             query = ElMD(query)
 
