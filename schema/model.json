@@ -1,0 +1,140 @@
+{
+  "$schema": "./model.schema.json",
+  "name": "elmtree",
+  "version": "1.0.0",
+
+  "assets": {
+    "artifacts/indexed_LC.pk": {
+      "type": "file",
+      "mime_type": "application/octet-stream",
+      "required": true,
+      "description": "Pickled ElMTree search index over the database of compositions"
+    },
+    "artifacts/mtree_lookup.pk": {
+      "type": "file",
+      "mime_type": "application/octet-stream",
+      "required": false,
+      "description": "Pickled lookup from composition (ElMD pretty formula) to the database records it appears in; without it, results carry no database ids"
+    }
+  },
+
+  "parameters": {},
+
+  "execution": {
+    "modes": {
+      "instance": {
+        "description": "Find the k compositions in the indexed database most similar to a query composition, by Element Movers Distance (ElMD).",
+        "response": "immediate",
+        "inputs": {
+          "composition": {
+            "type": "string",
+            "required": true,
+            "description": "Query chemical formula, e.g. \"NaCl\" or \"LiFePO4\""
+          },
+          "k": {
+            "type": "integer",
+            "default": 100,
+            "description": "Number of nearest neighbours to return (1-1000)"
+          },
+          "must_contain": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Only return compositions containing all of these elements, e.g. [\"Li\", \"O\"]"
+          },
+          "must_exclude": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Only return compositions containing none of these elements"
+          },
+          "experimental_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only return compositions found in an experimental database (needs an index built with database lookup tables; ignored otherwise)"
+          },
+          "structures_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only return compositions with an associated crystal structure (needs an index built with database lookup tables; ignored otherwise)"
+          }
+        },
+        "outputs": {
+          "query": {
+            "type": "string",
+            "description": "The query composition as a normalised ElMD formula"
+          },
+          "neighbours": {
+            "type": "array",
+            "description": "Nearest neighbours, closest first",
+            "items": {
+              "type": "object",
+              "properties": {
+                "formula": {
+                  "type": "string",
+                  "description": "Normalised formula of the matched composition"
+                },
+                "distance": {
+                  "type": "number",
+                  "description": "Element Movers Distance to the query (0 = identical)"
+                },
+                "databases": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Database records for this composition, as 'database: id, id'"
+                }
+              }
+            }
+          }
+        }
+      },
+
+      "dataset": {
+        "description": "Search for the nearest neighbours of many compositions from a CSV with a 'composition' column. Produces a CSV with one row per query and neighbour.",
+        "response": "deferred",
+        "inputs": {
+          "file": {
+            "type": "file",
+            "mime_type": "text/csv",
+            "required": true,
+            "description": "CSV file with a 'composition' column of chemical formulas"
+          },
+          "k": {
+            "type": "integer",
+            "default": 10,
+            "description": "Number of nearest neighbours per query (1-1000)"
+          },
+          "must_contain": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Only return compositions containing all of these elements"
+          },
+          "must_exclude": {
+            "type": "array",
+            "items": { "type": "string" },
+            "default": [],
+            "description": "Only return compositions containing none of these elements"
+          },
+          "experimental_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only return compositions found in an experimental database (needs an index built with database lookup tables)"
+          },
+          "structures_only": {
+            "type": "boolean",
+            "default": false,
+            "description": "Only return compositions with an associated crystal structure (needs an index built with database lookup tables)"
+          }
+        },
+        "outputs": {
+          "neighbours.csv": {
+            "type": "file",
+            "mime_type": "text/csv",
+            "description": "One row per query and neighbour: query_row, query_composition, query_formula, rank, formula, distance, databases, error"
+          }
+        }
+      }
+    }
+  }
+}

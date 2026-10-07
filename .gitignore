@@ -136,3 +136,14 @@ dmypy.json
 
 # Cython debug symbols
 cython_debug/
+# Local run outputs (sample inputs under data/ are tracked)
+/data/output/
+
+# --- Search index (runtime assets) ---
+# The ElMTree index and database lookup pickles are NOT committed to git
+# (the production ones contain data that may not be shared). They are provided
+# to the application at runtime (see src/model/artifacts/README.md). Only the
+# placeholder + manifest are tracked.
+/src/model/artifacts/*
+!/src/model/artifacts/.gitkeep
+!/src/model/artifacts/README.md

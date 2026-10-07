@@ -1,0 +1,8 @@
+{
+  "mode": "instance",
+  "inputs": {
+    "composition": { "value": "LiFePO4" },
+    "k": { "value": 5 }
+  },
+  "parameters": {}
+}

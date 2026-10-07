@@ -274,21 +274,16 @@ class ElMTree():
         for ind in inds:
             centre = self.centres[ind]
 
-            if ind == 0 or abs(distances[ind] - centre[2]) <= upper_bound:
+            # Every point in this cluster is at least d(q, centre) - radius
+            # from the query (triangle inequality), so the cluster can only
+            # hold a neighbour if that lower bound is within upper_bound.
+            # (Was abs(d(q, centre) - radius), which also skipped clusters the
+            # query sits deep inside and returned wrong neighbours.)
+            if ind == 0 or distances[ind] - centre[2] <= upper_bound:
                 for leaf in centre[1]:
-                    if advanced_search is not None and self.lookup_tables:
-                        if advanced_search["structures"] and not leaf.structure:
-                            continue
+                    if advanced_search is not None and self._excluded(leaf, advanced_search):
+                        continue
 
-                        if advanced_search["experimental"] and not leaf.experimental:
-                            continue
-
-                        if len(advanced_search["must_contain"]) > 0 and not set(leaf.entry.normed_composition.keys()).issuperset(advanced_search["must_contain"]):
-                            continue
-
-                        if len(advanced_search["must_exclude"]) > 0 and not set(leaf.entry.normed_composition.keys()).isdisjoint(advanced_search["must_exclude"]):
-                            continue
-                 
                     if abs(distances[ind] - leaf.distance) <= upper_bound:
                         leaf_distance = self.metric(leaf.entry, query)
 
@@ -301,10 +296,36 @@ class ElMTree():
                     elif distances[ind] < leaf.distance:
                         break
         
+        if not NN:  # e.g. advanced_search filters excluded every entry
+            return []
+
         if isinstance(NN[0], ElMD):
             return [(x.entry, x.distance, self.elmtree_lookup[x.entry.pretty_formula]) for x in NN[:k]]
         else:
             return [(x.entry, x.distance, self.elmtree_lookup[ElMD(x.entry).pretty_formula]) for x in NN[:k]]
+
+    def _excluded(self, leaf, advanced_search):
+        """Whether advanced_search filters out this leaf.
+
+        The element filters only need the composition, so they apply to any
+        index. The experimental/structures flags are only set on indexes built
+        with lookup_tables=True, so they are ignored otherwise."""
+        elements = set(leaf.entry.normed_composition.keys())
+
+        if advanced_search.get("must_contain") and not elements.issuperset(advanced_search["must_contain"]):
+            return True
+
+        if advanced_search.get("must_exclude") and not elements.isdisjoint(advanced_search["must_exclude"]):
+            return True
+
+        if getattr(self, "lookup_tables", False):
+            if advanced_search.get("structures") and not leaf.structure:
+                return True
+
+            if advanced_search.get("experimental") and not leaf.experimental:
+                return True
+
+        return False
         
 
 @dataclass
