@@ -24,19 +24,39 @@ uv run build-index data/sample_compositions.csv --database matbench_expt_gap
 # Nearest neighbours of one composition:
 scripts/run_instance.sh LiFePO4 5
 
-# Nearest neighbours for every composition in a CSV:
-scripts/run_dataset.sh data/input.csv 3     # -> data/output/neighbours.csv
+# Nearest neighbours for every composition in a CSV (15 trial queries):
+scripts/run_dataset.sh data/trial_queries.csv 3     # -> data/output/neighbours.csv
 ```
+
+The files `build-index` writes to `src/model/artifacts/` are a **demo index**
+of the 4,601 distinct compositions in the public `matbench_expt_gap` dataset.
+Results then list `matbench_expt_gap: <row id>` as their database record. For
+the real ElMTree search, upload the production `indexed_LC.pk` /
+`mtree_lookup.pk` instead (see below).
 
 ## Modes
 
 | Mode | Response | Inputs | Output |
 |------|----------|--------|--------|
-| `instance` | immediate | `composition`, `k` (default 100) + filters | `query` (normalised formula), `neighbours` (`formula`, `distance`, `databases`), closest first |
-| `dataset` | deferred | `file` (CSV with a `composition` column), `k` (default 10) + filters | `neighbours.csv`: one row per query × neighbour (`query_row`, `query_composition`, `query_formula`, `rank`, `formula`, `distance`, `databases`, `error`) |
+| `instance` | immediate | `composition`, `k` (default 100) + filters | summary values (`query`, `normalised_query`, `matches`, `nearest_match`, `nearest_distance`) + `neighbours.csv` (`rank`, `formula`, `normalised_formula`, `distance`, `databases`), closest first |
+| `dataset` | deferred | `file` (CSV with a `composition` column), `k` (default 10) + filters | `neighbours.csv`: one row per query × neighbour (`query_row`, `query`, `rank`, `formula`, `normalised_formula`, `distance`, `databases`, `error`) |
 
 The defaults of k=100 (single search) and k=10 (batch) match the original web
 search and API.
+
+How results are presented:
+
+- The neighbour list is a CSV asset, so the LMDS results page shows it as a
+  scrollable table rather than one long JSON value.
+- `formula` is the formula as it was indexed (e.g. `LiFePO4`).
+  `normalised_formula` is ElMD's fractional form (`Li0.143 Fe0.143 P0.143
+  O0.571`), which is what the distance compares.
+- Distances are rounded to 3 dp, as on the original web search.
+- Multiple records are written as `db: id id; db2: id`. CSV cells never
+  contain commas, because the frontend's table preview splits on every comma.
+
+`data/trial_queries.csv` is a ready-made dataset-mode input: 15 well-known
+materials, with a `name` column that is ignored.
 
 Optional filters, the "advanced search" in both modes:
 

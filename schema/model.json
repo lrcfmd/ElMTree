@@ -62,29 +62,28 @@
         "outputs": {
           "query": {
             "type": "string",
-            "description": "The query composition as a normalised ElMD formula"
+            "description": "The query composition, as entered"
           },
-          "neighbours": {
-            "type": "array",
-            "description": "Nearest neighbours, closest first",
-            "items": {
-              "type": "object",
-              "properties": {
-                "formula": {
-                  "type": "string",
-                  "description": "Normalised formula of the matched composition"
-                },
-                "distance": {
-                  "type": "number",
-                  "description": "Element Movers Distance to the query (0 = identical)"
-                },
-                "databases": {
-                  "type": "array",
-                  "items": { "type": "string" },
-                  "description": "Database records for this composition, as 'database: id, id'"
-                }
-              }
-            }
+          "normalised_query": {
+            "type": "string",
+            "description": "The query as a normalised ElMD formula (fractional amounts)"
+          },
+          "matches": {
+            "type": "integer",
+            "description": "Number of neighbours found (see neighbours.csv)"
+          },
+          "nearest_match": {
+            "type": "string",
+            "description": "The most similar composition in the database"
+          },
+          "nearest_distance": {
+            "type": "number",
+            "description": "Element Movers Distance from the query to the nearest match (0 = identical)"
+          },
+          "neighbours.csv": {
+            "type": "file",
+            "mime_type": "text/csv",
+            "description": "All neighbours, closest first: rank, formula, normalised_formula, distance, databases"
           }
         }
       },
@@ -131,7 +130,7 @@
           "neighbours.csv": {
             "type": "file",
             "mime_type": "text/csv",
-            "description": "One row per query and neighbour: query_row, query_composition, query_formula, rank, formula, distance, databases, error"
+            "description": "One row per query and neighbour: query_row, query, rank, formula, normalised_formula, distance, databases, error"
           }
         }
       }

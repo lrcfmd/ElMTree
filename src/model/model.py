@@ -14,6 +14,26 @@ LOOKUP_FILE = "mtree_lookup.pk"
 
 DEFAULT_K = {"instance": 100, "dataset": 10}  # as the original web search / API
 MAX_K = 1000
+DISTANCE_DP = 3  # as the original web search displayed distances
+
+# The LMDS frontend previews CSV outputs as a table but splits rows on every
+# comma (no quoting), so CSV cells must not contain commas.
+CSV_FIELDS = {
+    "instance": ["rank", "formula", "normalised_formula", "distance", "databases"],
+    "dataset": ["query_row", "query", "rank", "formula", "normalised_formula",
+                "distance", "databases", "error"],
+}
+
+
+def _csv_safe(value) -> str:
+    return str(value).replace(",", ";") if isinstance(value, str) else value
+
+
+def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
+    with path.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows({k: _csv_safe(v) for k, v in row.items()} for row in rows)
 
 
 # The index files are NOT committed to git; they are declared as `assets` in
@@ -142,7 +162,7 @@ class ElMTreeSearchModel:
                 ids = list(ids)
                 if db == "mpds":  # one record per MPDS entry, not per phase
                     ids = sorted({str(x).split("-")[0] for x in ids})
-                out.append(f"{db}: {', '.join(map(str, ids))}")
+                out.append(f"{db}: {' '.join(map(str, ids))}")
             else:
                 out.append(f"{db}: {ids}")
         return out
@@ -153,13 +173,23 @@ class ElMTreeSearchModel:
         results = self.tree.knn(query, k, advanced_search=advanced_search)
         neighbours = []
         for entry, distance, tree_value in results:
-            formula = ElMD(entry).pretty_formula
+            pretty = ElMD(entry).pretty_formula
+            # Show the formula as it was indexed (e.g. "LiFePO4"); the
+            # normalised ElMD form ("Li0.143 Fe0.143 ...") is the lookup key.
+            stored = entry if isinstance(entry, str) else getattr(entry, "formula", "")
             neighbours.append({
-                "formula": formula,
+                "formula": stored.strip() or pretty,
+                "normalised_formula": pretty,
                 "distance": float(distance),
-                "databases": self._databases(formula, tree_value),
+                "databases": self._databases(pretty, tree_value),
             })
         return {"query": query.pretty_formula, "neighbours": neighbours}
+
+    @staticmethod
+    def _presented(n: dict) -> dict:
+        """A neighbour as a CSV row: rounded distance, databases on one line."""
+        return {**n, "distance": round(n["distance"], DISTANCE_DP),
+                "databases": "; ".join(n["databases"])}
 
     # -- modes ------------------------------------------------------------
 
@@ -173,19 +203,35 @@ class ElMTreeSearchModel:
         logger,
     ) -> dict:
         if mode == "instance":
-            return self._process_instance(values, logger)
+            return self._process_instance(values, output_dir, logger)
         elif mode == "dataset":
             return self._process_dataset(values, files, output_dir, logger)
         else:
             raise ValueError(f"Unknown mode: {mode!r}")
 
-    def _process_instance(self, values: dict, logger) -> dict:
+    def _process_instance(self, values: dict, output_dir: Path, logger) -> dict:
         composition = values.get("composition")
         if composition is None:
             raise ValueError("No composition provided")
         result = self.search(composition, self._k(values, "instance"), self._filters(values))
-        logger.info("searched", query=result["query"], neighbours=len(result["neighbours"]))
-        return result
+        neighbours = result["neighbours"]
+        logger.info("searched", query=result["query"], neighbours=len(neighbours))
+
+        # The full list goes in a CSV asset, which the LMDS frontend shows as a
+        # table; the inline values are a short summary.
+        output_dir.mkdir(parents=True, exist_ok=True)
+        _write_csv(
+            output_dir / "neighbours.csv", CSV_FIELDS["instance"],
+            [{"rank": i, **self._presented(n)} for i, n in enumerate(neighbours, start=1)],
+        )
+        nearest = neighbours[0] if neighbours else None
+        return {
+            "query": composition.strip(),
+            "normalised_query": result["query"],
+            "matches": len(neighbours),
+            "nearest_match": nearest["formula"] if nearest else "",
+            "nearest_distance": round(nearest["distance"], DISTANCE_DP) if nearest else None,
+        }
 
     def _process_dataset(
         self, values: dict, files: dict[str, tuple[Path, str]], output_dir: Path, logger
@@ -219,35 +265,22 @@ class ElMTreeSearchModel:
             except Exception as e:  # a bad composition shouldn't abort the batch
                 logger.warning("search failed", row=i, composition=composition, error=str(e))
                 failed += 1
-                rows.append({"query_row": i, "query_composition": composition, "error": str(e)})
+                rows.append({"query_row": i, "query": composition, "error": str(e)})
                 continue
             if not result["neighbours"]:
-                rows.append({
-                    "query_row": i, "query_composition": composition,
-                    "query_formula": result["query"], "error": "no matches",
-                })
+                rows.append({"query_row": i, "query": composition, "error": "no matches"})
             for rank, n in enumerate(result["neighbours"], start=1):
                 rows.append({
                     "query_row": i,
-                    "query_composition": composition,
-                    "query_formula": result["query"],
+                    "query": composition,
                     "rank": rank,
-                    "formula": n["formula"],
-                    "distance": n["distance"],
-                    "databases": "; ".join(n["databases"]),
+                    **self._presented(n),
                     "error": "",
                 })
         logger.info("searched dataset", queries=len(data), failed=failed, rows=len(rows))
 
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / "neighbours.csv"
-        fieldnames = [
-            "query_row", "query_composition", "query_formula", "rank",
-            "formula", "distance", "databases", "error",
-        ]
-        with output_path.open("w", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
-            writer.writeheader()
-            writer.writerows(rows)
+        _write_csv(output_path, CSV_FIELDS["dataset"], rows)
         logger.info("saved asset", path=str(output_path))
         return {}

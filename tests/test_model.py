@@ -78,40 +78,54 @@ def test_element_filters_are_exact(model, entries) -> None:
             assert "O" in els and not els & {"Fe", "Co"}
 
 
-def test_instance(model) -> None:
-    result = model.process(
-        "instance", {"composition": "Fe2O3", "k": 5}, {}, Path("/tmp/elm_out"), {}, LOG
-    )
-    assert result["query"] == "Fe0.4 O0.6"
-    assert len(result["neighbours"]) == 5
-    first = result["neighbours"][0]
-    assert first["formula"] == "Fe0.4 O0.6" and first["distance"] == 0.0
-    assert first["databases"] and first["databases"][0].startswith("matbench: ")
-    distances = [n["distance"] for n in result["neighbours"]]
+def _neighbours_csv(out: Path) -> list[dict]:
+    text = (out / "neighbours.csv").read_text()
+    # The LMDS frontend splits CSV rows on every comma, so cells must have none.
+    widths = {len(line.split(",")) for line in text.strip().splitlines()}
+    assert len(widths) == 1, "a CSV cell contains a comma"
+    return list(csv.DictReader(text.splitlines()))
+
+
+def test_instance(model, tmp_path) -> None:
+    result = model.process("instance", {"composition": "Fe2O3", "k": 5}, {}, tmp_path, {}, LOG)
+    assert result == {
+        "query": "Fe2O3", "normalised_query": "Fe0.4 O0.6", "matches": 5,
+        "nearest_match": "Fe2O3", "nearest_distance": 0.0,
+    }
+    rows = _neighbours_csv(tmp_path)
+    assert [r["rank"] for r in rows] == ["1", "2", "3", "4", "5"]
+    assert rows[0]["formula"] == "Fe2O3" and rows[0]["normalised_formula"] == "Fe0.4 O0.6"
+    assert rows[0]["databases"].startswith("matbench: ")
+    distances = [float(r["distance"]) for r in rows]
     assert distances == sorted(distances)
+    assert all(len(r["distance"].split(".")[-1]) <= 3 for r in rows)  # 3 dp
 
 
-def test_instance_default_k(model) -> None:
-    result = model.process("instance", {"composition": "NaCl"}, {}, Path("/tmp/elm_out"), {}, LOG)
-    assert len(result["neighbours"]) == 100
+def test_instance_default_k(model, tmp_path) -> None:
+    result = model.process("instance", {"composition": "NaCl"}, {}, tmp_path, {}, LOG)
+    assert result["matches"] == 100
+    assert len(_neighbours_csv(tmp_path)) == 100
 
 
-def test_instance_filters_via_process(model) -> None:
-    result = model.process(
+def test_instance_filters_via_process(model, tmp_path) -> None:
+    model.process(
         "instance",
         {"composition": "Fe2O3", "k": 3, "must_contain": ["Li"], "must_exclude": "Co, Ni"},
-        {}, Path("/tmp/elm_out"), {}, LOG,
+        {}, tmp_path, {}, LOG,
     )
-    for n in result["neighbours"]:
+    rows = _neighbours_csv(tmp_path)
+    assert len(rows) == 3
+    for n in rows:
         els = set(ElMD(n["formula"]).normed_composition)
         assert "Li" in els and not els & {"Co", "Ni"}
 
 
-def test_filters_excluding_everything(model) -> None:
+def test_filters_excluding_everything(model, tmp_path) -> None:
     result = model.process(
-        "instance", {"composition": "NaCl", "must_contain": ["Og"]}, {}, Path("/tmp/elm_out"), {}, LOG
+        "instance", {"composition": "NaCl", "must_contain": ["Og"]}, {}, tmp_path, {}, LOG
     )
-    assert result["neighbours"] == []
+    assert result["matches"] == 0 and result["nearest_match"] == ""
+    assert _neighbours_csv(tmp_path) == []
 
 
 @pytest.mark.parametrize("bad, match", [
@@ -163,7 +177,7 @@ def test_missing_index(tmp_path, monkeypatch) -> None:
 def test_databases_formatting(model) -> None:
     model._load()
     model.lookup = {"X": {"icsd": [1, 2], "mpds": ["S1-a", "S1-b", "S2-a"], "compound_formula": "X"}}
-    assert model._databases("X", None) == ["icsd: 1, 2", "mpds: S1, S2"]
+    assert model._databases("X", None) == ["icsd: 1 2", "mpds: S1 S2"]
     assert model._databases("missing", None) == []
 
 
@@ -173,14 +187,13 @@ def test_dataset(model, tmp_path) -> None:
         "dataset", {"k": 3}, {"file": (INPUT_CSV, "text/csv")}, out, {}, LOG
     )
     assert result == {}
-    with (out / "neighbours.csv").open() as f:
-        rows = list(csv.DictReader(f))
+    rows = _neighbours_csv(out)
     with INPUT_CSV.open() as f:
         n_queries = sum(1 for _ in csv.DictReader(f))
     assert len(rows) == 3 * n_queries
     assert all(r["error"] == "" for r in rows)
     assert [r["rank"] for r in rows[:3]] == ["1", "2", "3"]
-    single = model.search(rows[0]["query_composition"], 3)["neighbours"]
+    single = model.search(rows[0]["query"], 3)["neighbours"]
     assert [r["formula"] for r in rows[:3]] == [n["formula"] for n in single]
 
 
@@ -189,8 +202,7 @@ def test_dataset_bad_rows_do_not_abort(model, tmp_path) -> None:
     src.write_text("id,composition\n1,NaCl\n2,Xx2O\n3,\n4,GaAs\n")
     out = tmp_path / "output"
     model.process("dataset", {"k": 2}, {"file": (src, "text/csv")}, out, {}, LOG)
-    with (out / "neighbours.csv").open() as f:
-        rows = list(csv.DictReader(f))
+    rows = _neighbours_csv(out)
     by_query = {}
     for r in rows:
         by_query.setdefault(r["query_row"], []).append(r)
