@@ -128,13 +128,28 @@ One empty key (`""`, 76k CSD ids with no formula) is skipped.
 
 **What the file holds.** The file is SQLite and stores each composition's
 sparse ElMD ratio vector, its database records, the experimental/structures
-flags and the database metadata (see `src/model/index.py`). At load (0.8 s,
-about 0.9 GB of RAM for the production index) the tool builds float32
-cumulative vectors. The "fast" ElMD is the L1 distance between those, and
-entries are stored sorted by a 1-D lower bound on that distance. A search only
-scans the window around the query that the bound can't rule out, so a typical
-query takes about 10 ms. Results are exact: they match a brute-force scan of
-all 1.37 M compositions, and the tests check this.
+flags and the database metadata (see `src/model/index.py`). The "fast" ElMD
+is the L1 distance between cumulative ratio vectors. Entries are stored sorted
+by a 1-D lower bound on that distance, so a search only expands and measures
+the window around the query that the bound can't rule out. Nothing is
+precomputed at load, which takes about 0.1 s and 0.3 GB of RAM for the
+production index. A typical query takes about 35 ms. Results are exact: they
+match a brute-force scan of all 1.37 M compositions, and the tests check this.
+
+**Speed per run.** LMDS starts a fresh container for every run, so what
+matters is start-up cost, not search time. The original web search was one
+long-running server with its index already in memory. Here a whole
+single-composition run takes about 1.8 s in the container (it was 6.3 s).
+Three things keep it there:
+- the index needs no work at load;
+- pandas is only imported for dataset mode;
+- the image ships compiled bytecode (`uv sync --compile-bytecode`), so a fresh
+  container doesn't recompile every import. As uid 1000 it couldn't save the
+  `.pyc` files, so it used to recompile them on every run.
+
+The platform adds its own time on top: queueing, starting the container,
+downloading the 241 MB index asset, and the results page checking for
+completion every 2 s.
 
 The index records the ElMD version and vector length it was built with, and
 the tool refuses an index whose vectors don't match the installed ElMD.
@@ -143,7 +158,7 @@ the tool refuses an index whose vectors don't match the installed ElMD.
 
 1. **The search runs on a compact index instead of the pickled `ElMTree`**
    (see [Search index](#search-index-runtime-asset)): one 241 MB file in
-   place of 5.4 GB + 198 MB, loaded in under a second instead of needing more
+   place of 5.4 GB + 198 MB, loaded in 0.1 s instead of needing more
    than 10 GB of RAM. Results are exact and carry all of the original
    lookup's 3,966,299 database records.
 2. **Exact k-nearest-neighbour search in the `ElMTree` library.** `ElMTree.knn` skipped a cluster

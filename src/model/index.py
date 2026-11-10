@@ -13,8 +13,9 @@ copies of the periodic-table lookups (5.4 GB on disk, >10 GB to unpickle).
 The search is exact. Entries are stored sorted by S = sum_j C_j, and
 |S(a) - S(q)| <= d(a, q), so scanning outwards from the query's S can stop as
 soon as the next unscanned entry's bound exceeds the current k-th distance.
-Candidates are screened with float32 cumulative vectors, then re-ranked with
-float64 distances computed exactly as ElMD computes them.
+Only the scanned entries are expanded to dense vectors, and their distances
+are computed exactly as ElMD computes them. Nothing is precomputed at load, so
+a fresh process (one per LMDS run) is ready in about 0.1 s.
 
 Everything lives in one SQLite file (the tool's single runtime asset):
   meta       key/value: format_version, elmd_version, vector_length, ...
@@ -39,11 +40,9 @@ from ElMD import ElMD
 FORMAT_VERSION = "1"
 INDEX_FILE = "elmtree_index.db"
 
-# The float32 screening distances are within ~1e-4 of the exact ones, so
-# keeping every candidate within EPS of the screened k-th distance (and
-# scanning until the bound clears it) guarantees the exact top k is kept.
-EPS = 1e-3
-CHUNK = 65536  # rows per vectorised block (~27 MB of float32 temporaries)
+# Rounding slack when comparing the lower bound with the k-th distance.
+EPS = 1e-9
+CHUNK = 32768  # rows per vectorised block (~27 MB of float64 temporaries)
 FIRST_BLOCK = 4096
 
 
@@ -190,12 +189,6 @@ class CompositionIndex:
                 "structures": bool(d["structures"]), "url": d["url"],
             }
         self.n_records = int(meta["n_records"]) if "n_records" in meta else None
-
-        # float32 cumulative vectors for screening (~0.4 KB per entry)
-        self.cdf = np.empty((self.n, self.width), dtype=np.float32)
-        for a in range(0, self.n, CHUNK):
-            b = min(self.n, a + CHUNK)
-            self.cdf[a:b] = np.cumsum(self._dense(np.arange(a, b)), axis=1)
         self._mask_cache: tuple | None = None
 
     def __len__(self) -> int:
@@ -237,8 +230,6 @@ class CompositionIndex:
 
     def knn(self, vector: np.ndarray, k: int, mask: np.ndarray | None = None) -> list[tuple[int, float]]:
         """The k nearest entries to a ratio vector as (row, distance), closest first."""
-        q = np.cumsum(vector)
-        q32 = q.astype(np.float32)
         sq = float(np.sum(vector * (self.width - np.arange(self.width))))
 
         rows = None if mask is None else np.flatnonzero(mask)
@@ -249,20 +240,21 @@ class CompositionIndex:
 
         found_rows, found_d = [], []
 
-        def screen(a, b):
+        def scan(a, b):
+            """Distances, as ElMD's fast metric computes them, for entries a..b."""
             for s in range(a, b, CHUNK):
                 e = min(b, s + CHUNK)
-                sel = slice(s, e) if rows is None else rows[s:e]
-                found_rows.append(np.arange(s, e) if rows is None else rows[s:e])
-                found_d.append(np.abs(self.cdf[sel] - q32).sum(axis=1))
+                block = np.arange(s, e) if rows is None else rows[s:e]
+                found_rows.append(block)
+                found_d.append(np.abs(np.cumsum(self._dense(block) - vector, axis=1)).sum(axis=1))
 
         lo = hi = int(np.searchsorted(sums, sq))
         block = FIRST_BLOCK
         cand_rows, cand_d = np.empty(0, dtype=np.intp), np.empty(0)
         while True:
             new_lo, new_hi = max(0, lo - block), min(m, hi + block)
-            screen(new_lo, lo)
-            screen(hi, new_hi)
+            scan(new_lo, lo)
+            scan(hi, new_hi)
             lo, hi = new_lo, new_hi
             cand_rows = np.concatenate([cand_rows, *found_rows])
             cand_d = np.concatenate([cand_d, *found_d])
@@ -272,7 +264,7 @@ class CompositionIndex:
             kth = np.inf
             if len(cand_d) >= k:
                 kth = float(np.partition(cand_d, k - 1)[k - 1])
-                keep = cand_d <= kth + EPS
+                keep = cand_d <= kth
                 cand_rows, cand_d = cand_rows[keep], cand_d[keep]
             bound = min(sq - sums[lo - 1] if lo > 0 else np.inf,
                         sums[hi] - sq if hi < m else np.inf)
@@ -280,10 +272,8 @@ class CompositionIndex:
                 break
             block *= 2
 
-        # Exact float64 distances, as ElMD computes them, for the candidates
-        exact = np.abs(np.cumsum(self._dense(cand_rows) - vector, axis=1)).sum(axis=1)
-        order = np.lexsort((cand_rows, exact))[:k]
-        return [(int(cand_rows[i]), float(exact[i])) for i in order]
+        order = np.lexsort((cand_rows, cand_d))[:k]
+        return [(int(cand_rows[i]), float(cand_d[i])) for i in order]
 
     def entries(self, rows: list[int]) -> dict[int, dict]:
         """formula, normalised_formula and records for the given rows."""

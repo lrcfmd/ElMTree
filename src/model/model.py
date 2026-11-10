@@ -4,7 +4,6 @@ import re
 import time
 from pathlib import Path
 
-import pandas as pd
 from ElMD import ElMD
 
 from infrastructure.logging import newLogger
@@ -250,6 +249,8 @@ class ElMTreeSearchModel:
         csv_path, _ = files["file"]
         k = self._k(values, "dataset")
         advanced_search = self._filters(values)
+
+        import pandas as pd  # only needed here; importing it costs ~1 s per run
 
         try:
             data = pd.read_csv(csv_path, dtype=str, keep_default_na=False)
