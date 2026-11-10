@@ -52,19 +52,20 @@ search and API.
 
 How results are presented:
 
-- `elmtree_results.html` is the readable view. Its header gives the query, how
-  it was compared (ElMD's normalised formula) and what was searched. Each
-  neighbour is a row with:
-  - its formula (`Li1Fe1P1O4` shown as LiFePO₄) and normalised form;
-  - its distance, with a bar for scanning and "identical" at 0;
-  - one chip per database it is reported in, with its record count.
-
-  Chips are coloured by kind of database: orange for experimental structures,
-  blue for experimental properties, green for computational. Hovering a chip
-  describes the database, and clicking it opens the database's website in a
-  new tab. Record IDs are folded behind "Show N record IDs". Dataset mode adds
-  an overview of every query's nearest match, linking to each query's
-  results. The page is light-themed and self-contained.
+- `elmtree_results.html` is laid out like the original web search, on a light
+  background. It has a "Searched N compositions across M records" header and
+  a legend. Each neighbour is a row with its name (subscripted composition,
+  icons for the kinds of database it is reported in), its distance (with a
+  bar relative to the furthest match shown, and "identical" at 0), and what
+  it is reported in: its IDs in each database, with more than 8 folded
+  behind "+N more". Databases use the original
+  site's display names and colours: orange for experimental structures (ICSD,
+  Pearson's, MPDS structures, …), blue for experimental properties, and green
+  for computational. They are ordered the same way, in both the page and the
+  CSV. Hovering a database name shows what the database is and how many
+  records it has for that composition. Clicking the name opens the
+  database's website in a new tab. The page is self-contained, because the
+  LMDS frontend shows HTML outputs in a sandboxed iframe.
 - `neighbours.csv` has the same list for download.
 - `formula` is the formula as it was indexed (for the production index, as
   the source database gave it, e.g. `Li1Fe1P1O4`). `normalised_formula` is
