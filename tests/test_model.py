@@ -12,6 +12,7 @@ from infrastructure.logging import newLogger
 from model.build_index import main as build_index
 from model.convert_index import main as convert_index
 from model.index import INDEX_FILE
+from model import report
 from model.model import ElMTreeSearchModel
 
 LOG = newLogger("test")
@@ -108,6 +109,28 @@ def test_instance(model, tmp_path) -> None:
     distances = [float(r["distance"]) for r in rows]
     assert distances == sorted(distances)
     assert all(len(r["distance"].split(".")[-1]) <= 3 for r in rows)  # 3 dp
+
+
+def test_instance_results_page(model, tmp_path) -> None:
+    model.process("instance", {"composition": "Fe2O3", "k": 12, "must_contain": ["O"]},
+                  {}, tmp_path, {}, LOG)
+    page = (tmp_path / "elmtree_results.html").read_text()
+    assert page.startswith("<!doctype html>")
+    assert "for <b>Fe<sub>0.4</sub> O<sub>0.6</sub></b>" in page
+    assert "Filters: must contain O" in page
+    assert page.count('<td class="rank">') == 12
+    assert "Experimental structures reported" in page  # legend
+    assert "http" not in page  # self-contained: the frontend sandboxes it
+
+
+def test_results_page_folds_long_id_lists() -> None:
+    n = {"formula": "NaCl", "normalised_formula": "Na0.5 Cl0.5", "distance": 0.0,
+         "records": [("icsd", list(range(20)))]}
+    page = report.instance_page({"query": "Na0.5 Cl0.5", "neighbours": [n], "seconds": 0.01},
+                                None, {"compositions": 1, "records": 20}, {})
+    assert "0, 1, 2, 3, 4, 5, 6, 7<details><summary> … +12 more</summary>, 8, 9" in page
+    assert report.subscript("Li(Fe0.97Mn0.03)(PO4)") == \
+        "Li(Fe<sub>0.97</sub>Mn<sub>0.03</sub>)(PO<sub>4</sub>)"
 
 
 def test_instance_default_k(model, tmp_path) -> None:
@@ -211,7 +234,7 @@ def test_index_format_is_checked(index_dir, tmp_path, monkeypatch) -> None:
 def test_convert_index(tmp_path, monkeypatch) -> None:
     # A miniature of the original server's mtree_lookup.pk / db_lookup.pk
     lookup = {
-        "Na0.5 Cl0.5": {"icsd": ["1", "2"], "ccdc": ["ABC"],
+        "Na0.5 Cl0.5": {"aflow": ["z"], "mpds_struc": ["S9"], "icsd": ["1", "2"],
                         "compound_formula": ["'NaCl'", "Na1Cl1"]},
         # rounded key: the vector must come from the exact compound formula
         "Cu0.667 Al0.333": {"mp": ["mp-1"], "compound_formula": ["AlCu2\n"]},
@@ -220,11 +243,13 @@ def test_convert_index(tmp_path, monkeypatch) -> None:
         "": {"ccdc": ["X"], "compound_formula": [""]},  # skipped
     }
     dbs = {
-        "icsd": {"description": "ICSD", "experimental": True, "structures": True, "url": "u"},
+        "icsd": {"description": "ICSD", "display": "ICSD", "experimental": True,
+                 "structures": True, "url": "u"},
         "ccdc": {"description": "CSD", "experimental": True, "structures": True, "url": "u"},
         "mp": {"description": "MP", "experimental": False, "structures": True, "url": "u"},
         "aflow": {"description": "AFLOW", "experimental": False, "structures": False, "url": "u"},
-        "mpds_struc": {"description": "MPDS", "experimental": True, "structures": False, "url": "u"},
+        "mpds_struc": {"description": "MPDS", "display": "MPDS Structural Database",
+                       "experimental": True, "structures": False, "url": "u"},
     }
     for name, obj in [("mtree_lookup.pk", lookup), ("db_lookup.pk", dbs)]:
         with (tmp_path / name).open("wb") as f:
@@ -237,8 +262,10 @@ def test_convert_index(tmp_path, monkeypatch) -> None:
 
     result = model.search("NaCl", 10)["neighbours"]
     assert len(result) == 4
-    assert result[0] == {"formula": "NaCl", "normalised_formula": "Na0.5 Cl0.5", "distance": 0.0,
-                         "databases": ["icsd: 1 2", "ccdc: ABC"]}
+    nacl = result[0]
+    assert (nacl["formula"], nacl["normalised_formula"], nacl["distance"]) == ("NaCl", "Na0.5 Cl0.5", 0.0)
+    # ordered as the original site: experimental structures, experimental, computational
+    assert nacl["databases"] == ["icsd: 1 2", "mpds_struc: S9", "aflow: z"]
     alcu = next(n for n in model.search("AlCu2", 10)["neighbours"] if n["formula"] == "AlCu2")
     assert alcu["distance"] == 0.0  # exact, not the rounded 0.333/0.667
     fallback = next(n for n in result if n["normalised_formula"] == "Fe0.4 O0.6")
@@ -249,6 +276,11 @@ def test_convert_index(tmp_path, monkeypatch) -> None:
     assert formulas({"experimental": True}) == ["KBr", "NaCl"]
     assert formulas({"structures": True}) == ["AlCu2", "NaCl"]
     assert formulas({"experimental": True, "structures": True}) == ["NaCl"]
+
+    model.process("instance", {"composition": "NaCl", "k": 4}, {}, tmp_path / "o", {}, LOG)
+    page = (tmp_path / "o" / "elmtree_results.html").read_text()
+    assert "Searched 4 unique compositions across 7 records" in page
+    assert page.index(">ICSD<") < page.index(">MPDS Structural Database<") < page.index(">aflow<")
 
 
 def test_convert_index_rejects_objects(tmp_path) -> None:
@@ -296,6 +328,9 @@ def test_dataset_bad_rows_do_not_abort(model, tmp_path) -> None:
     assert len(by_query["1"]) == 1 and "Unknown element" in by_query["1"][0]["error"]
     assert len(by_query["2"]) == 1 and by_query["2"][0]["error"] != ""
     assert len(by_query["3"]) == 2 and by_query["3"][0]["error"] == ""
+    page = (out / "elmtree_results.html").read_text()
+    assert page.count('<section class="query">') == 4
+    assert "Unknown element" in page and page.count('<td class="rank">') == 4
 
 
 def test_dataset_missing_column(model, tmp_path) -> None:

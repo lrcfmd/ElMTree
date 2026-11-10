@@ -74,6 +74,11 @@
             "type": "number",
             "description": "Element Movers Distance from the query to the nearest match (0 = identical)"
           },
+          "elmtree_results.html": {
+            "type": "file",
+            "mime_type": "text/html",
+            "description": "Results page laid out like the original ElMTree search: each neighbour's composition, the kinds of database it is reported in, its IDs in each database and its distance"
+          },
           "neighbours.csv": {
             "type": "file",
             "mime_type": "text/csv",
@@ -121,6 +126,11 @@
           }
         },
         "outputs": {
+          "elmtree_results.html": {
+            "type": "file",
+            "mime_type": "text/html",
+            "description": "Results page with each query's neighbours laid out like the original ElMTree search (the first 500 queries)"
+          },
           "neighbours.csv": {
             "type": "file",
             "mime_type": "text/csv",

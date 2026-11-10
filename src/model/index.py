@@ -22,7 +22,8 @@ Everything lives in one SQLite file (the tool's single runtime asset):
              (sums) and per-entry experimental/structures flags, as .npy blobs
   entries    id (= row in the arrays), formula, normalised_formula and the
              database records as JSON {database: [ids]}
-  databases  name, description, experimental, structures, url
+  databases  name, display (name shown in results), description,
+             experimental, structures, url
 """
 
 import io
@@ -73,7 +74,7 @@ def write_index(path: Path, entries: list[dict], databases: dict[str, dict], sou
 
     entries: [{"formula", "normalised_formula", "positions", "ratios",
                "records": {database: [ids]}}]
-    databases: {name: {"description", "experimental", "structures", "url"}}
+    databases: {name: {"display", "description", "experimental", "structures", "url"}}
     """
     if not entries:
         raise ValueError("No compositions to index")
@@ -109,6 +110,7 @@ def write_index(path: Path, entries: list[dict], databases: dict[str, dict], sou
         "elmd_version": version("ElMD"),
         "vector_length": str(width),
         "n_entries": str(len(entries)),
+        "n_records": str(sum(len(ids) for e in entries for ids in e["records"].values())),
         "source": source,
         "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -125,7 +127,7 @@ def write_index(path: Path, entries: list[dict], databases: dict[str, dict], sou
             "normalised_formula TEXT, records TEXT)"
         )
         con.execute(
-            "CREATE TABLE databases (name TEXT PRIMARY KEY, description TEXT, "
+            "CREATE TABLE databases (name TEXT PRIMARY KEY, display TEXT, description TEXT, "
             "experimental INTEGER, structures INTEGER, url TEXT)"
         )
         con.executemany("INSERT INTO meta VALUES (?, ?)", meta.items())
@@ -138,9 +140,9 @@ def write_index(path: Path, entries: list[dict], databases: dict[str, dict], sou
         )
         used = {db for e in entries for db in e["records"]}
         con.executemany(
-            "INSERT INTO databases VALUES (?, ?, ?, ?, ?)",
-            ((name, d.get("description", ""), int(bool(d.get("experimental"))),
-              int(bool(d.get("structures"))), d.get("url", ""))
+            "INSERT INTO databases VALUES (?, ?, ?, ?, ?, ?)",
+            ((name, d.get("display") or name, d.get("description", ""),
+              int(bool(d.get("experimental"))), int(bool(d.get("structures"))), d.get("url", ""))
              for name, d in sorted(databases.items()) if name in used),
         )
     con.execute("VACUUM")
@@ -177,11 +179,17 @@ class CompositionIndex:
         self.experimental = arrays["experimental"]
         self.structures = arrays["structures"]
         self.n = len(self.indptr) - 1
-        self.databases = {
-            name: {"description": desc, "experimental": bool(exp),
-                   "structures": bool(struct), "url": url}
-            for name, desc, exp, struct, url in self.con.execute("SELECT * FROM databases")
-        }
+        cursor = self.con.execute("SELECT * FROM databases")
+        columns = [c[0] for c in cursor.description]
+        self.databases = {}
+        for row in cursor:
+            d = dict(zip(columns, row))
+            self.databases[d["name"]] = {
+                "display": d.get("display") or d["name"],  # no display column before v1.1
+                "description": d["description"], "experimental": bool(d["experimental"]),
+                "structures": bool(d["structures"]), "url": d["url"],
+            }
+        self.n_records = int(meta["n_records"]) if "n_records" in meta else None
 
         # float32 cumulative vectors for screening (~0.4 KB per entry)
         self.cdf = np.empty((self.n, self.width), dtype=np.float32)

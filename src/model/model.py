@@ -1,17 +1,21 @@
 import csv
 import os
 import re
+import time
 from pathlib import Path
 
 import pandas as pd
 from ElMD import ElMD
 
 from infrastructure.logging import newLogger
+from model import report
 from model.index import INDEX_FILE, CompositionIndex
 
 DEFAULT_K = {"instance": 100, "dataset": 10}  # as the original web search / API
 MAX_K = 1000
 DISTANCE_DP = 3  # as the original web search displayed distances
+RESULTS_HTML = "elmtree_results.html"
+MAX_HTML_QUERIES = 500  # dataset-mode queries rendered in the HTML page
 
 # The LMDS frontend previews CSV outputs as a table but splits rows on every
 # comma (no quoting), so CSV cells must not contain commas.
@@ -141,23 +145,29 @@ class ElMTreeSearchModel:
     # -- search -----------------------------------------------------------
 
     @staticmethod
-    def _databases(records: dict) -> list[str]:
+    def _ids(db: str, ids) -> list:
+        ids = list(ids) if isinstance(ids, (list, tuple, set)) else [ids]
+        if db == "mpds":  # one record per MPDS entry, not per phase
+            ids = sorted({str(x).split("-")[0] for x in ids})
+        return ids
+
+    def _ordered_records(self, records: dict) -> dict:
+        """A neighbour's records, ordered as the original site listed them:
+        experimental structures, then experimental properties, then
+        computational databases."""
+        dbs = [db for db in records if db != "compound_formula"]
+        dbs.sort(key=lambda db: report.KIND_ORDER[report.kind(self.index.databases.get(db))])
+        return {db: self._ids(db, records[db]) for db in dbs}
+
+    @classmethod
+    def _databases(cls, records: dict) -> list[str]:
         """Database records for a neighbour, as 'database: id id' strings."""
-        out = []
-        for db, ids in records.items():
-            if db == "compound_formula":
-                continue
-            if isinstance(ids, (list, tuple, set)):
-                ids = list(ids)
-                if db == "mpds":  # one record per MPDS entry, not per phase
-                    ids = sorted({str(x).split("-")[0] for x in ids})
-                out.append(f"{db}: {' '.join(map(str, ids))}")
-            else:
-                out.append(f"{db}: {ids}")
-        return out
+        return [f"{db}: {' '.join(map(str, cls._ids(db, ids)))}"
+                for db, ids in records.items() if db != "compound_formula"]
 
     def search(self, composition: str, k: int, advanced_search: dict | None = None) -> dict:
         self._load()
+        started = time.perf_counter()
         query = self.parse(composition)
         mask = self.index.mask(advanced_search, query.petti_lookup)
         results = self.index.knn(query.ratio_vector, k, mask)
@@ -165,15 +175,21 @@ class ElMTreeSearchModel:
         neighbours = []
         for row, distance in results:
             entry = entries[row]
+            records = self._ordered_records(entry["records"])
             # Show the formula as it was indexed (e.g. "LiFePO4"); the
             # normalised ElMD form ("Li0.143 Fe0.143 ...") is what is compared.
             neighbours.append({
                 "formula": entry["formula"] or entry["normalised_formula"],
                 "normalised_formula": entry["normalised_formula"],
                 "distance": distance,
-                "databases": self._databases(entry["records"]),
+                "databases": self._databases(records),
+                "records": list(records.items()),
             })
-        return {"query": query.pretty_formula, "neighbours": neighbours}
+        return {"query": query.pretty_formula, "neighbours": neighbours,
+                "seconds": time.perf_counter() - started}
+
+    def _stats(self) -> dict:
+        return {"compositions": len(self.index), "records": self.index.n_records}
 
     @staticmethod
     def _presented(n: dict) -> dict:
@@ -207,9 +223,12 @@ class ElMTreeSearchModel:
         neighbours = result["neighbours"]
         logger.info("searched", query=result["query"], neighbours=len(neighbours))
 
-        # The full list goes in a CSV asset, which the LMDS frontend shows as a
-        # table; the inline values are a short summary.
+        # The results page shows the neighbours as the original web search did;
+        # the CSV has the same list for download, and the inline values are a
+        # short summary.
         output_dir.mkdir(parents=True, exist_ok=True)
+        (output_dir / RESULTS_HTML).write_text(report.instance_page(
+            result, self._filters(values), self._stats(), self.index.databases))
         _write_csv(
             output_dir / "neighbours.csv", CSV_FIELDS["instance"],
             [{"rank": i, **self._presented(n)} for i, n in enumerate(neighbours, start=1)],
@@ -246,6 +265,7 @@ class ElMTreeSearchModel:
 
         self._load()
         rows = []
+        pages = []
         failed = 0
         # Queries run one at a time in this process (a few ms each); the
         # original list path used process_map, which copied the whole index
@@ -257,7 +277,9 @@ class ElMTreeSearchModel:
                 logger.warning("search failed", row=i, composition=composition, error=str(e))
                 failed += 1
                 rows.append({"query_row": i, "query": composition, "error": str(e)})
+                pages.append({"row": i, "query": composition, "error": str(e)})
                 continue
+            pages.append({"row": i, "query": composition, "result": result})
             if not result["neighbours"]:
                 rows.append({"query_row": i, "query": composition, "error": "no matches"})
             for rank, n in enumerate(result["neighbours"], start=1):
@@ -273,5 +295,7 @@ class ElMTreeSearchModel:
         output_dir.mkdir(parents=True, exist_ok=True)
         output_path = output_dir / "neighbours.csv"
         _write_csv(output_path, CSV_FIELDS["dataset"], rows)
-        logger.info("saved asset", path=str(output_path))
+        (output_dir / RESULTS_HTML).write_text(report.dataset_page(
+            pages, advanced_search, self._stats(), self.index.databases, MAX_HTML_QUERIES))
+        logger.info("saved assets", csv=str(output_path), html=RESULTS_HTML)
         return {}

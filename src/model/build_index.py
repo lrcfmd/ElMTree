@@ -29,6 +29,7 @@ def main(argv=None) -> None:
     parser.add_argument("--database", default="database",
                         help="name to file the ids under in search results")
     parser.add_argument("--description", default="", help="description of the database")
+    parser.add_argument("--display", default="", help="name shown in results (default: --database)")
     parser.add_argument("--experimental", action="store_true",
                         help="the database is experimental (for experimental_only searches)")
     parser.add_argument("--structures", action="store_true",
@@ -57,7 +58,8 @@ def main(argv=None) -> None:
                 }
             entries[elmd.pretty_formula]["records"][args.database].append(row.get("id") or str(i))
 
-    databases = {args.database: {"description": args.description,
+    databases = {args.database: {"display": args.display or args.database,
+                                 "description": args.description,
                                  "experimental": args.experimental,
                                  "structures": args.structures, "url": ""}}
     out = args.out / INDEX_FILE

@@ -44,16 +44,25 @@ database record.
 
 | Mode | Response | Inputs | Output |
 |------|----------|--------|--------|
-| `instance` | immediate | `composition`, `k` (default 100) + filters | summary values (`query`, `normalised_query`, `matches`, `nearest_match`, `nearest_distance`) + `neighbours.csv` (`rank`, `formula`, `normalised_formula`, `distance`, `databases`), closest first |
-| `dataset` | deferred | `file` (CSV with a `composition` column), `k` (default 10) + filters | `neighbours.csv`: one row per query × neighbour (`query_row`, `query`, `rank`, `formula`, `normalised_formula`, `distance`, `databases`, `error`) |
+| `instance` | immediate | `composition`, `k` (default 100) + filters | summary values (`query`, `normalised_query`, `matches`, `nearest_match`, `nearest_distance`), `elmtree_results.html`, and `neighbours.csv` (`rank`, `formula`, `normalised_formula`, `distance`, `databases`), closest first |
+| `dataset` | deferred | `file` (CSV with a `composition` column), `k` (default 10) + filters | `elmtree_results.html` (one section per query, first 500) and `neighbours.csv`: one row per query × neighbour (`query_row`, `query`, `rank`, `formula`, `normalised_formula`, `distance`, `databases`, `error`) |
 
 The defaults of k=100 (single search) and k=10 (batch) match the original web
 search and API.
 
 How results are presented:
 
-- The neighbour list is a CSV asset, so the LMDS results page shows it as a
-  scrollable table rather than one long JSON value.
+- `elmtree_results.html` is laid out like the original web search. It has a
+  "Searched N compositions across M records" header and a legend. Each
+  neighbour is a row with its subscripted composition, icons for the kinds of
+  database it is reported in, its IDs in each database (more than 8 fold
+  behind "+N more") and its distance. Databases use the original site's
+  display names and colours: orange for experimental structures (ICSD,
+  Pearson's, MPDS structures, …), blue for experimental properties, and green
+  for computational. They are ordered the same way, in both the page and the
+  CSV. The page is self-contained, because the LMDS frontend shows HTML
+  outputs in a sandboxed iframe.
+- `neighbours.csv` has the same list for download.
 - `formula` is the formula as it was indexed (for the production index, as
   the source database gave it, e.g. `Li1Fe1P1O4`). `normalised_formula` is
   ElMD's fractional form (`Li0.143 Fe0.143 P0.143 O0.571`), which is what the
