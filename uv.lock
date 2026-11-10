@@ -433,7 +433,7 @@ sdist = { url = "https://files.pythonhosted.org/packages/e7/68/b2dfef945c4291a30
 
 [[package]]
 name = "elmtree"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "ase" },

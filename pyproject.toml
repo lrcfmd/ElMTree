@@ -1,6 +1,6 @@
 [project]
 name = "elmtree"
-version = "1.0.0"
+version = "1.1.0"
 description = "ElMTree nearest-neighbour search over chemical compositions by Element Movers Distance, for the LMDS platform"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,8 +9,9 @@ dependencies = [
     "jsonschema>=4.26.0",
     "boto3>=1.34.0",
     "structlog>=25.5.0",
-    # The search index is a pickled ElMTree whose entries are ElMD objects, so
-    # ElMD is pinned to the version the index files are built/tested with.
+    # Index vectors and query vectors must come from the same ElMD (the index
+    # records its ElMD version and vector length, checked at load), so ElMD is
+    # pinned to the version the index files are built/tested with.
     "ElMD==0.5.15",
     # ElMD imports pkg_resources, which setuptools 81 removed.
     "setuptools<81",
@@ -35,12 +36,13 @@ model-run = "cmds.run:run_cli"
 model-types = "cmds.model_types:main"
 validate-model = "cmds.validate_model:main"
 build-index = "model.build_index:main"
+convert-index = "model.convert_index:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-# The index files are NOT bundled in the wheel or image — they are provided to
+# The index file is NOT bundled in the wheel or image — they are provided to
 # the application at runtime (see src/model/artifacts/README.md). Exclude them
 # explicitly: the Docker build context has no .git, so VCS-ignore alone would
 # not keep locally-present files out of the wheel.

@@ -1,6 +1,5 @@
 import csv
 import os
-import pickle
 import re
 from pathlib import Path
 
@@ -8,9 +7,7 @@ import pandas as pd
 from ElMD import ElMD
 
 from infrastructure.logging import newLogger
-
-INDEX_FILE = "indexed_LC.pk"
-LOOKUP_FILE = "mtree_lookup.pk"
+from model.index import INDEX_FILE, CompositionIndex
 
 DEFAULT_K = {"instance": 100, "dataset": 10}  # as the original web search / API
 MAX_K = 1000
@@ -36,7 +33,7 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
         writer.writerows({k: _csv_safe(v) for k, v in row.items()} for row in rows)
 
 
-# The index files are NOT committed to git; they are declared as `assets` in
+# The index file is NOT committed to git; it is declared as an `asset` in
 # schema/model.json and provided at runtime. On the platform the runner
 # downloads them to their declared paths under the container WORKDIR
 # (./artifacts/…), so that is the primary location. For a local source checkout
@@ -57,8 +54,9 @@ class ElMTreeSearchModel:
 
     Ported from the LMDS ElMTree web app. Compositions are compared with the
     Element Movers Distance (ElMD, "fast" 1-D metric on the modified
-    Pettifor scale) and searched with a pre-built ElMTree index. Two Modes
-    share one search path:
+    Pettifor scale) and searched exactly over a pre-built index of the
+    compositions in many databases (see model/index.py). Two Modes share one
+    search path:
       ``instance`` — one composition, its k nearest neighbours inline.
       ``dataset``  — a CSV of compositions, a neighbours CSV out.
     """
@@ -72,7 +70,6 @@ class ElMTreeSearchModel:
             return
         artifacts = _artifacts_dir()
         index_path = artifacts / INDEX_FILE
-        lookup_path = artifacts / LOOKUP_FILE
         self.logger.info("loading artifacts", dir=str(artifacts))
 
         if not index_path.is_file():
@@ -83,18 +80,12 @@ class ElMTreeSearchModel:
                 "MODEL_ARTIFACTS_DIR to the directory that holds it, or mount "
                 "it into the default location."
             )
-        # The index files are trusted platform assets (uploaded by an admin),
-        # loaded exactly as the original app did.
-        with index_path.open("rb") as f:
-            self.tree = pickle.load(f)
-        self.lookup = None
-        if lookup_path.is_file():
-            with lookup_path.open("rb") as f:
-                self.lookup = pickle.load(f)
+        self.index = CompositionIndex(index_path)
         self.logger.info(
             "loaded index",
-            centres=len(self.tree.centres),
-            lookup=self.lookup is not None,
+            compositions=len(self.index),
+            databases=len(self.index.databases),
+            source=self.index.meta.get("source"),
         )
         self._loaded = True
 
@@ -149,13 +140,11 @@ class ElMTreeSearchModel:
 
     # -- search -----------------------------------------------------------
 
-    def _databases(self, formula: str, tree_value) -> list[str]:
-        """Database records for a neighbour, as 'database: id, id' strings."""
-        entry = self.lookup.get(formula) if self.lookup is not None else tree_value
-        if not isinstance(entry, dict):
-            return []
+    @staticmethod
+    def _databases(records: dict) -> list[str]:
+        """Database records for a neighbour, as 'database: id id' strings."""
         out = []
-        for db, ids in entry.items():
+        for db, ids in records.items():
             if db == "compound_formula":
                 continue
             if isinstance(ids, (list, tuple, set)):
@@ -170,18 +159,19 @@ class ElMTreeSearchModel:
     def search(self, composition: str, k: int, advanced_search: dict | None = None) -> dict:
         self._load()
         query = self.parse(composition)
-        results = self.tree.knn(query, k, advanced_search=advanced_search)
+        mask = self.index.mask(advanced_search, query.petti_lookup)
+        results = self.index.knn(query.ratio_vector, k, mask)
+        entries = self.index.entries([row for row, _ in results])
         neighbours = []
-        for entry, distance, tree_value in results:
-            pretty = ElMD(entry).pretty_formula
+        for row, distance in results:
+            entry = entries[row]
             # Show the formula as it was indexed (e.g. "LiFePO4"); the
-            # normalised ElMD form ("Li0.143 Fe0.143 ...") is the lookup key.
-            stored = entry if isinstance(entry, str) else getattr(entry, "formula", "")
+            # normalised ElMD form ("Li0.143 Fe0.143 ...") is what is compared.
             neighbours.append({
-                "formula": stored.strip() or pretty,
-                "normalised_formula": pretty,
-                "distance": float(distance),
-                "databases": self._databases(pretty, tree_value),
+                "formula": entry["formula"] or entry["normalised_formula"],
+                "normalised_formula": entry["normalised_formula"],
+                "distance": distance,
+                "databases": self._databases(entry["records"]),
             })
         return {"query": query.pretty_formula, "neighbours": neighbours}
 
@@ -257,8 +247,9 @@ class ElMTreeSearchModel:
         self._load()
         rows = []
         failed = 0
-        # Queries run one at a time in this process: the original list path
-        # used process_map, which copies the whole index into every worker.
+        # Queries run one at a time in this process (a few ms each); the
+        # original list path used process_map, which copied the whole index
+        # into every worker.
         for i, composition in enumerate(data["composition"]):
             try:
                 result = self.search(composition, k, advanced_search)

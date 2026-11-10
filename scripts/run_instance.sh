@@ -6,7 +6,7 @@ set -euo pipefail
 #
 # Example:
 #   ./scripts/run_instance.sh LiFePO4 10
-# Needs the index in src/model/artifacts/ (see README: uv run build-index ...).
+# Needs src/model/artifacts/elmtree_index.db (see README: convert-index / build-index).
 
 COMPOSITION="${1:-LiFePO4}"
 K="${2:-10}"

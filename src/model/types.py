@@ -13,9 +13,9 @@ class InstanceInputs(TypedDict, total=False):
     must_contain: list[str]  # default: []
     # Only return compositions containing none of these elements
     must_exclude: list[str]  # default: []
-    # Only return compositions found in an experimental database (needs an index built with database lookup tables; ignored otherwise)
+    # Only return compositions found in at least one experimental database
     experimental_only: bool  # default: False
-    # Only return compositions with an associated crystal structure (needs an index built with database lookup tables; ignored otherwise)
+    # Only return compositions found in at least one database with crystal structures
     structures_only: bool  # default: False
 
 class DatasetInputs(TypedDict, total=False):
@@ -27,7 +27,7 @@ class DatasetInputs(TypedDict, total=False):
     must_contain: list[str]  # default: []
     # Only return compositions containing none of these elements
     must_exclude: list[str]  # default: []
-    # Only return compositions found in an experimental database (needs an index built with database lookup tables)
+    # Only return compositions found in at least one experimental database
     experimental_only: bool  # default: False
-    # Only return compositions with an associated crystal structure (needs an index built with database lookup tables)
+    # Only return compositions found in at least one database with crystal structures
     structures_only: bool  # default: False

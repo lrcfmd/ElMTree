@@ -1,36 +1,41 @@
-# Search index (runtime assets)
+# Search index (runtime asset)
 
-These files are **not committed to git**. The production index contains data
-that may not be shared. They are declared as `assets` in
-[`schema/model.json`](../../../schema/model.json) and provided to the tool at
-run time by the LMDS platform:
+This file is **not committed to git**: the production index contains
+identifiers from licensed databases (ICSD, CSD, Pearson's, MPDS). It is
+declared as an `asset` in [`schema/model.json`](../../../schema/model.json)
+and provided to the tool at run time by the LMDS platform:
 
-1. An admin uploads a file for each declared asset path under the version's
+1. An admin uploads the file for its declared asset path under the version's
    **Manage → Versions → Assets** page (the upload UI only accepts paths that
    are declared in the schema).
-2. When a run starts, the runner downloads each asset from S3 to its declared
-   path under the container WORKDIR (`./artifacts/…`), before the handler runs.
+2. When a run starts, the runner downloads it from S3 to its declared path
+   under the container WORKDIR (`./artifacts/…`), before the handler runs.
 
-The model reads them from `./artifacts/` (or the package's `artifacts/` dir for
-a local source checkout; `MODEL_ARTIFACTS_DIR` overrides both). It fails fast if
-the required index is missing.
+The model reads it from `./artifacts/` (or the package's `artifacts/` dir for
+a local source checkout; `MODEL_ARTIFACTS_DIR` overrides both). It fails fast
+if the index is missing or was built for a different ElMD vector length.
 
 | Asset path (declared in model.json) | Required | What it is |
 |--------------------------------------|----------|------------|
-| `artifacts/indexed_LC.pk` | yes | Pickled `ElMTree` index of the composition database (the original web app's `indexed_LC.pk`, uploaded unchanged) |
-| `artifacts/mtree_lookup.pk` | no | Pickled `{pretty_formula: {database: [ids], ...}}` lookup (the original `mtree_lookup.pk`). Without it, results carry no database ids |
+| `artifacts/elmtree_index.db` | yes | SQLite index: every composition's ElMD vector, its records in each database, and the database metadata (see `src/model/index.py`) |
 
-The index pickle references the classes `ElMTree.ElMTree.ElMTree`/`Entry` and
-`ElMD.ElMD.ElMD`; this package keeps those import paths, so an index pickled by
-the original ElMTree code loads unchanged (verified with an index built by the
-original code). `ElMD` is pinned (see `pyproject.toml`).
-
-**Your own data:** build both files from a CSV with a `composition` column (and
-an optional `id` column):
+**Production index** (1,367,525 compositions, 58 databases, 241 MB), from the
+original web search's lookup tables:
 
 ```bash
-uv run build-index data/sample_compositions.csv --database matbench_expt_gap
+uv run convert-index mtree_lookup.pk db_lookup.pk
 ```
 
-**Local development:** place the files in this directory
-(`src/model/artifacts/`); running from source resolves them here by default.
+**Your own data:** from a CSV with a `composition` column (and an optional
+`id` column):
+
+```bash
+uv run build-index data/sample_compositions.csv --database matbench_expt_gap --experimental
+```
+
+The original server's `indexed_LC.pk` is not used. It needs more than 10 GB
+of RAM to unpickle, and `convert-index` rebuilds the same index from the two
+lookup tables (see the main README).
+
+**Local development:** both commands write to this directory
+(`src/model/artifacts/`) by default, and running from source reads it here.

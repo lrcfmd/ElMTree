@@ -1,69 +1,68 @@
-"""Build ElMTree search-index files from a CSV of compositions.
+"""Build an ElMTree search index from a CSV of compositions.
 
-The production index files (indexed_LC.pk + mtree_lookup.pk) are not public.
-This builds files in the same format from your own data, as the original
-README's ``main()`` did:
+For the production index (all the databases the original web search used),
+see ``convert-index``. This builds an index from your own data:
 
     uv run build-index data/sample_compositions.csv \\
-        --database matbench_expt_gap --out src/model/artifacts
+        --database matbench_expt_gap --experimental --out src/model/artifacts
 
 Input: a CSV with a ``composition`` column and, optionally, an ``id`` column
 (record identifiers, shown in search results as ``<database>: <ids>``).
+Compositions that normalise to the same formula are indexed once, with all
+their ids.
 
-Writes to --out:
-  indexed_LC.pk    pickled ElMTree index (the required asset)
-  mtree_lookup.pk  {pretty_formula: {database: [ids]}} (the optional asset)
+Writes ``elmtree_index.db`` (the tool's runtime asset) to --out.
 """
 
 import argparse
 import csv
-import pickle
-import random
-from collections import defaultdict
 from pathlib import Path
 
 from ElMD import ElMD
 
-from ElMTree import ElMTree
+from model.index import INDEX_FILE, sparse_vector, write_index
 
 
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("csv", type=Path, help="CSV with a 'composition' column")
     parser.add_argument("--database", default="database",
-                        help="name to file the ids under in the lookup")
+                        help="name to file the ids under in search results")
+    parser.add_argument("--description", default="", help="description of the database")
+    parser.add_argument("--experimental", action="store_true",
+                        help="the database is experimental (for experimental_only searches)")
+    parser.add_argument("--structures", action="store_true",
+                        help="the database has crystal structures (for structures_only searches)")
     parser.add_argument("--out", type=Path, default=Path("src/model/artifacts"))
-    parser.add_argument("--seed", type=int, default=0,
-                        help="seed for the random choice of cluster centres")
-    parser.add_argument("--max-workers", type=int, default=None)
     args = parser.parse_args(argv)
 
-    lookup: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
-    compositions = []
+    entries: dict[str, dict] = {}
     with args.csv.open(newline="") as f:
         for i, row in enumerate(csv.DictReader(f)):
             formula = (row.get("composition") or "").strip()
             if not formula:
                 continue
-            pretty = ElMD(formula, metric="fast").pretty_formula
-            if not pretty:
+            elmd = ElMD(formula, metric="fast")
+            if not elmd.pretty_formula:
                 print(f"skipping unparseable composition on row {i}: {formula!r}")
                 continue
-            if pretty not in lookup:
-                compositions.append(formula)  # index each distinct composition once
-            lookup[pretty][args.database].append(row.get("id") or str(i))
+            if elmd.pretty_formula not in entries:
+                positions, ratios = sparse_vector(elmd)
+                entries[elmd.pretty_formula] = {
+                    "formula": formula,
+                    "normalised_formula": elmd.pretty_formula,
+                    "positions": positions,
+                    "ratios": ratios,
+                    "records": {args.database: []},
+                }
+            entries[elmd.pretty_formula]["records"][args.database].append(row.get("id") or str(i))
 
-    print(f"{len(compositions)} distinct compositions")
-    random.seed(args.seed)
-    tree = ElMTree(compositions, pre_process=True, verbose=True,
-                   max_workers=args.max_workers)
-
-    args.out.mkdir(parents=True, exist_ok=True)
-    with (args.out / "indexed_LC.pk").open("wb") as f:
-        pickle.dump(tree, f)
-    with (args.out / "mtree_lookup.pk").open("wb") as f:
-        pickle.dump({k: dict(v) for k, v in lookup.items()}, f)
-    print(f"wrote {args.out / 'indexed_LC.pk'} and {args.out / 'mtree_lookup.pk'}")
+    databases = {args.database: {"description": args.description,
+                                 "experimental": args.experimental,
+                                 "structures": args.structures, "url": ""}}
+    out = args.out / INDEX_FILE
+    write_index(out, list(entries.values()), databases, source=f"build-index {args.csv.name}")
+    print(f"wrote {out}: {len(entries)} distinct compositions")
 
 
 if __name__ == "__main__":

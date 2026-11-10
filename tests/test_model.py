@@ -1,13 +1,17 @@
 import csv
 import pickle
 import random
+import sqlite3
 from pathlib import Path
 
 import pytest
 from ElMD import ElMD
 
+from ElMTree import ElMTree
 from infrastructure.logging import newLogger
 from model.build_index import main as build_index
+from model.convert_index import main as convert_index
+from model.index import INDEX_FILE
 from model.model import ElMTreeSearchModel
 
 LOG = newLogger("test")
@@ -18,18 +22,22 @@ FAST = ElMD("", metric="fast").elmd
 
 
 @pytest.fixture(scope="session")
-def index_dir(tmp_path_factory) -> Path:
-    """A real index + lookup built from 1500 sample compositions."""
-    tmp = tmp_path_factory.mktemp("index")
+def sample_rows() -> list[dict]:
     with SAMPLE.open() as f:
-        rows = list(csv.DictReader(f))[:1500]
+        return list(csv.DictReader(f))[:1500]
+
+
+@pytest.fixture(scope="session")
+def index_dir(tmp_path_factory, sample_rows) -> Path:
+    """A real index built from 1500 sample compositions."""
+    tmp = tmp_path_factory.mktemp("index")
     subset = tmp / "subset.csv"
     with subset.open("w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=["id", "composition"])
         w.writeheader()
-        w.writerows(rows)
+        w.writerows(sample_rows)
     out = tmp / "artifacts"
-    build_index([str(subset), "--database", "matbench", "--out", str(out), "--max-workers", "2"])
+    build_index([str(subset), "--database", "matbench", "--experimental", "--out", str(out)])
     return out
 
 
@@ -40,10 +48,12 @@ def model(index_dir, monkeypatch) -> ElMTreeSearchModel:
 
 
 @pytest.fixture(scope="session")
-def entries(index_dir) -> list[ElMD]:
-    with (index_dir / "indexed_LC.pk").open("rb") as f:
-        tree = pickle.load(f)
-    return [leaf.entry for centre in tree.centres for leaf in centre[1]]
+def entries(sample_rows) -> list[ElMD]:
+    unique = {}
+    for row in sample_rows:
+        e = ElMD(row["composition"], metric="fast")
+        unique.setdefault(e.pretty_formula, e)
+    return list(unique.values())
 
 
 def _brute(query: str, entries, k, keep=lambda e: True) -> list[float]:
@@ -52,8 +62,7 @@ def _brute(query: str, entries, k, keep=lambda e: True) -> list[float]:
 
 
 def test_knn_is_exact(model, entries) -> None:
-    # The original pruning test (abs(d - r) <= bound) returned wrong
-    # neighbours for ~20% of queries; the fixed index must match brute force.
+    # The search must match brute force over every indexed composition.
     random.seed(0)
     queries = [e.pretty_formula for e in random.sample(entries, 60)]
     queries += ["NaCl", "LiFePO4", "Fe2O3", "Bi2Te3", "Ca(OH)2"]
@@ -158,27 +167,104 @@ def test_instance_missing_composition(model) -> None:
         model.process("instance", {}, {}, Path("/tmp/elm_out"), {}, LOG)
 
 
-def test_without_lookup(index_dir, tmp_path, monkeypatch) -> None:
-    only_index = tmp_path / "artifacts"
-    only_index.mkdir()
-    (only_index / "indexed_LC.pk").write_bytes((index_dir / "indexed_LC.pk").read_bytes())
-    monkeypatch.setenv("MODEL_ARTIFACTS_DIR", str(only_index))
-    result = ElMTreeSearchModel().search("NaCl", 3)
-    assert len(result["neighbours"]) == 3
-    assert all(n["databases"] == [] for n in result["neighbours"])
+def test_library_elmtree_agrees_with_index(model, entries) -> None:
+    # The ElMTree library's list-of-clusters search (with the kNN pruning fix)
+    # and the tool's index are both exact, so they must agree.
+    random.seed(1)
+    tree = ElMTree([e.formula for e in entries[:600]], pre_process=True, max_workers=2)
+    for q in ["NaCl", "Fe2O3", "LiCoO2"] + [e.formula for e in random.sample(entries[:600], 15)]:
+        got = [round(d, 9) for _, d, _ in tree.knn(q, 5)]
+        assert got == _brute(q, entries[:600], 5), q
+
+
+def test_experimental_and_structures_filters(model) -> None:
+    # The sample index's one database was built with --experimental only.
+    assert len(model.search("NaCl", 5, {"experimental": True})["neighbours"]) == 5
+    assert model.search("NaCl", 5, {"structures": True})["neighbours"] == []
 
 
 def test_missing_index(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("MODEL_ARTIFACTS_DIR", str(tmp_path))
-    with pytest.raises(FileNotFoundError, match="indexed_LC.pk"):
+    with pytest.raises(FileNotFoundError, match=INDEX_FILE):
         ElMTreeSearchModel().search("NaCl", 3)
 
 
-def test_databases_formatting(model) -> None:
-    model._load()
-    model.lookup = {"X": {"icsd": [1, 2], "mpds": ["S1-a", "S1-b", "S2-a"], "compound_formula": "X"}}
-    assert model._databases("X", None) == ["icsd: 1 2", "mpds: S1 S2"]
-    assert model._databases("missing", None) == []
+def test_index_format_is_checked(index_dir, tmp_path, monkeypatch) -> None:
+    for key, value, match in [("format_version", "0", "index format"),
+                              ("vector_length", "99", "Rebuild the index")]:
+        bad = tmp_path / key
+        bad.mkdir()
+        (bad / INDEX_FILE).write_bytes((index_dir / INDEX_FILE).read_bytes())
+        with sqlite3.connect(bad / INDEX_FILE) as con:
+            con.execute("UPDATE meta SET value = ? WHERE key = ?", (value, key))
+        monkeypatch.setenv("MODEL_ARTIFACTS_DIR", str(bad))
+        with pytest.raises(ValueError, match=match):
+            ElMTreeSearchModel().search("NaCl", 3)
+    not_index = tmp_path / "not_index"
+    not_index.mkdir()
+    (not_index / INDEX_FILE).write_bytes(b"x" * 4096)
+    monkeypatch.setenv("MODEL_ARTIFACTS_DIR", str(not_index))
+    with pytest.raises(ValueError, match="not an ElMTree index"):
+        ElMTreeSearchModel().search("NaCl", 3)
+
+
+def test_convert_index(tmp_path, monkeypatch) -> None:
+    # A miniature of the original server's mtree_lookup.pk / db_lookup.pk
+    lookup = {
+        "Na0.5 Cl0.5": {"icsd": ["1", "2"], "ccdc": ["ABC"],
+                        "compound_formula": ["'NaCl'", "Na1Cl1"]},
+        # rounded key: the vector must come from the exact compound formula
+        "Cu0.667 Al0.333": {"mp": ["mp-1"], "compound_formula": ["AlCu2\n"]},
+        "Fe0.4 O0.6": {"aflow": ["a1"], "compound_formula": ["junk("]},  # falls back to key
+        "K0.5 Br0.5": {"mpds_struc": ["S1"], "compound_formula": ["KBr"]},
+        "": {"ccdc": ["X"], "compound_formula": [""]},  # skipped
+    }
+    dbs = {
+        "icsd": {"description": "ICSD", "experimental": True, "structures": True, "url": "u"},
+        "ccdc": {"description": "CSD", "experimental": True, "structures": True, "url": "u"},
+        "mp": {"description": "MP", "experimental": False, "structures": True, "url": "u"},
+        "aflow": {"description": "AFLOW", "experimental": False, "structures": False, "url": "u"},
+        "mpds_struc": {"description": "MPDS", "experimental": True, "structures": False, "url": "u"},
+    }
+    for name, obj in [("mtree_lookup.pk", lookup), ("db_lookup.pk", dbs)]:
+        with (tmp_path / name).open("wb") as f:
+            pickle.dump(obj, f)
+    out = tmp_path / "artifacts"
+    convert_index([str(tmp_path / "mtree_lookup.pk"), str(tmp_path / "db_lookup.pk"),
+                   "--out", str(out), "--max-workers", "1"])
+    monkeypatch.setenv("MODEL_ARTIFACTS_DIR", str(out))
+    model = ElMTreeSearchModel()
+
+    result = model.search("NaCl", 10)["neighbours"]
+    assert len(result) == 4
+    assert result[0] == {"formula": "NaCl", "normalised_formula": "Na0.5 Cl0.5", "distance": 0.0,
+                         "databases": ["icsd: 1 2", "ccdc: ABC"]}
+    alcu = next(n for n in model.search("AlCu2", 10)["neighbours"] if n["formula"] == "AlCu2")
+    assert alcu["distance"] == 0.0  # exact, not the rounded 0.333/0.667
+    fallback = next(n for n in result if n["normalised_formula"] == "Fe0.4 O0.6")
+    assert fallback["formula"] == "Fe0.4 O0.6"
+
+    def formulas(filters):
+        return sorted(n["formula"] for n in model.search("NaCl", 10, filters)["neighbours"])
+    assert formulas({"experimental": True}) == ["KBr", "NaCl"]
+    assert formulas({"structures": True}) == ["AlCu2", "NaCl"]
+    assert formulas({"experimental": True, "structures": True}) == ["NaCl"]
+
+
+def test_convert_index_rejects_objects(tmp_path) -> None:
+    with (tmp_path / "mtree_lookup.pk").open("wb") as f:
+        pickle.dump({"Na0.5 Cl0.5": {"x": Path("/")}}, f)
+    with (tmp_path / "db_lookup.pk").open("wb") as f:
+        pickle.dump({}, f)
+    with pytest.raises(pickle.UnpicklingError, match="unexpected object"):
+        convert_index([str(tmp_path / "mtree_lookup.pk"), str(tmp_path / "db_lookup.pk"),
+                       "--out", str(tmp_path / "o")])
+
+
+def test_databases_formatting() -> None:
+    records = {"icsd": [1, 2], "mpds": ["S1-a", "S1-b", "S2-a"], "compound_formula": "X"}
+    assert ElMTreeSearchModel._databases(records) == ["icsd: 1 2", "mpds: S1 S2"]
+    assert ElMTreeSearchModel._databases({}) == []
 
 
 def test_dataset(model, tmp_path) -> None:

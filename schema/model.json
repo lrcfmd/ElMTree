@@ -1,20 +1,14 @@
 {
   "$schema": "./model.schema.json",
   "name": "elmtree",
-  "version": "1.0.0",
+  "version": "1.1.0",
 
   "assets": {
-    "artifacts/indexed_LC.pk": {
+    "artifacts/elmtree_index.db": {
       "type": "file",
-      "mime_type": "application/octet-stream",
+      "mime_type": "application/vnd.sqlite3",
       "required": true,
-      "description": "Pickled ElMTree search index over the database of compositions"
-    },
-    "artifacts/mtree_lookup.pk": {
-      "type": "file",
-      "mime_type": "application/octet-stream",
-      "required": false,
-      "description": "Pickled lookup from composition (ElMD pretty formula) to the database records it appears in; without it, results carry no database ids"
+      "description": "Search index (SQLite): every composition's ElMD vector plus the database records it appears in. Made by convert-index from the original web search's lookup tables, or by build-index from a CSV"
     }
   },
 
@@ -23,7 +17,7 @@
   "execution": {
     "modes": {
       "instance": {
-        "description": "Find the k compositions in the indexed database most similar to a query composition, by Element Movers Distance (ElMD).",
+        "description": "Find the k compositions in the indexed databases most similar to a query composition, by Element Movers Distance (ElMD).",
         "response": "immediate",
         "inputs": {
           "composition": {
@@ -51,12 +45,12 @@
           "experimental_only": {
             "type": "boolean",
             "default": false,
-            "description": "Only return compositions found in an experimental database (needs an index built with database lookup tables; ignored otherwise)"
+            "description": "Only return compositions found in at least one experimental database"
           },
           "structures_only": {
             "type": "boolean",
             "default": false,
-            "description": "Only return compositions with an associated crystal structure (needs an index built with database lookup tables; ignored otherwise)"
+            "description": "Only return compositions found in at least one database with crystal structures"
           }
         },
         "outputs": {
@@ -74,7 +68,7 @@
           },
           "nearest_match": {
             "type": "string",
-            "description": "The most similar composition in the database"
+            "description": "The most similar composition in the indexed databases"
           },
           "nearest_distance": {
             "type": "number",
@@ -83,7 +77,7 @@
           "neighbours.csv": {
             "type": "file",
             "mime_type": "text/csv",
-            "description": "All neighbours, closest first: rank, formula, normalised_formula, distance, databases"
+            "description": "All neighbours, closest first: rank, formula, normalised_formula, distance, databases (the records in each database, as database: ids)"
           }
         }
       },
@@ -118,12 +112,12 @@
           "experimental_only": {
             "type": "boolean",
             "default": false,
-            "description": "Only return compositions found in an experimental database (needs an index built with database lookup tables)"
+            "description": "Only return compositions found in at least one experimental database"
           },
           "structures_only": {
             "type": "boolean",
             "default": false,
-            "description": "Only return compositions with an associated crystal structure (needs an index built with database lookup tables)"
+            "description": "Only return compositions found in at least one database with crystal structures"
           }
         },
         "outputs": {

@@ -4,7 +4,7 @@
 .gitignore
 .DS_Store
 # Model artifacts are provided at runtime, never baked into the image.
-src/model/artifacts/*.pk
+src/model/artifacts/*
 # Tests and sample data are not part of the runtime image.
 tests/
 data/
