@@ -1,74 +1,122 @@
-"""HTML results page, laid out like the original ElMTree web search.
+"""HTML results page for ElMTree searches.
 
-Each neighbour is a row with its composition (subscripted), icons for the kinds
-of database it was reported in, its records grouped by database (ordered and
-coloured by kind, as on the original site) and its distance. The page is
+Each neighbour is one row: its composition, its distance (with a bar, for
+scanning), and chips for the databases it is reported in. A chip's colour is
+the kind of database, hovering it describes the database and clicking it opens
+the database's website. Record IDs are folded away per row. The page is
 self-contained (no external assets), because the LMDS frontend shows HTML
 outputs in a sandboxed iframe.
 """
 
+import json
 import re
 from html import escape
+from urllib.parse import urlparse
 
-IDS_SHOWN = 8  # ids per database before the rest fold behind "+N more"
-
-# Database kinds, in the order the original site listed them
-KINDS = [
-    ("exp_struct", "Experimental structures reported", "#d9773f"),
-    ("exp_prop", "Experimentally characterised properties reported", "#2f6fdb"),
-    ("computed", "Computationally derived properties or structures reported", "#3f9a4a"),
-]
-KIND_ORDER = {kind: i for i, (kind, _, _) in enumerate(KINDS)}
-
-ICONS = {
-    # crystal unit cell
-    "exp_struct": '<path d="M5 8 12 4l7 4v8l-7 4-7-4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'
-                  '<path d="m5 8 7 4 7-4M12 12v8" fill="none" stroke="currentColor" stroke-width="1.6"/>'
-                  '<circle cx="12" cy="4" r="1.6"/><circle cx="5" cy="8" r="1.6"/><circle cx="19" cy="8" r="1.6"/>'
-                  '<circle cx="12" cy="12" r="1.6"/><circle cx="5" cy="16" r="1.6"/><circle cx="19" cy="16" r="1.6"/>'
-                  '<circle cx="12" cy="20" r="1.6"/>',
-    # flask
-    "exp_prop": '<path d="M9.5 3h5M10.5 3v6L5 19a1.3 1.3 0 0 0 1.1 2h11.8a1.3 1.3 0 0 0 1.1-2L13.5 9V3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>'
-                '<path d="M7.6 15h8.8l2.3 4.4H5.3z"/>',
-    # monitor
-    "computed": '<rect x="3" y="4" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>'
-                '<path d="M9 20h6M12 16v4" stroke="currentColor" stroke-width="1.6"/>'
-                '<path d="m8 12 3-3 2 2 3-3" fill="none" stroke="currentColor" stroke-width="1.6"/>',
+# Kinds of database, in the order chips are listed
+KINDS = {
+    "exp_struct": ("Experimental structures", "Experimental · crystal structures"),
+    "exp_prop": ("Experimental properties", "Experimental · measured properties"),
+    "computed": ("Computational", "Computational · calculated structures or properties"),
 }
+KIND_ORDER = {kind: i for i, kind in enumerate(KINDS)}
 
 STYLE = """
-:root { --text:#1d2330; --muted:#667085; --line:#e4e7ec; --stripe:#f5f7fb; --bg:#ffffff; }
-@media (prefers-color-scheme: dark) {
-  :root { --text:#e6e8ee; --muted:#98a2b3; --line:#2c3240; --stripe:#1a1f2b; --bg:#11151d; }
-}
-* { box-sizing: border-box; }
-body { margin:0; padding:16px; background:var(--bg); color:var(--text);
-       font:14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-.summary { margin:0 0 4px; }
-.filters, .note { margin:0 0 8px; color:var(--muted); font-size:13px; }
-.legend { display:flex; flex-wrap:wrap; gap:6px 18px; margin:8px 0 14px; font-size:13px; color:var(--muted); }
-.legend span { display:inline-flex; align-items:center; gap:6px; }
+:root { color-scheme: light; --text:#1f2937; --muted:#6b7280; --faint:#9ca3af; --line:#e5e7eb;
+        --soft:#f9fafb; --accent:#2563eb;
+        --exp_struct:#c2410c; --exp_struct-bg:#fff7ed; --exp_struct-line:#fed7aa;
+        --exp_prop:#1d4ed8; --exp_prop-bg:#eff6ff; --exp_prop-line:#bfdbfe;
+        --computed:#15803d; --computed-bg:#f0fdf4; --computed-line:#bbf7d0; }
+* { box-sizing:border-box; }
+html, body { background:#ffffff; }
+body { margin:0; padding:20px; color:var(--text);
+       font:14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+h1 { font-size:18px; font-weight:600; margin:0 0 4px; }
+h2 { font-size:16px; font-weight:600; margin:0; }
+.meta { color:var(--muted); margin:0; }
+.filters { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0 0; }
+.filter { font-size:12px; padding:2px 8px; border-radius:999px; background:var(--soft);
+          border:1px solid var(--line); color:var(--muted); }
+.key { display:flex; flex-wrap:wrap; gap:6px 18px; align-items:center; margin:14px 0 16px;
+       padding:10px 12px; background:var(--soft); border:1px solid var(--line); border-radius:8px;
+       font-size:12px; color:var(--muted); }
+.key .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px;
+            vertical-align:-1px; }
 table { width:100%; border-collapse:collapse; }
-th { text-align:left; font-weight:600; padding:8px 10px; border-bottom:2px solid var(--line); white-space:nowrap; }
-td { vertical-align:top; padding:10px; border-bottom:1px solid var(--line); }
-tbody tr:nth-child(even) { background:var(--stripe); }
-td.rank { color:var(--muted); width:1%; }
-td.comp { width:28%; }
-td.dist { width:1%; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.formula { font-size:15px; }
-.reported { color:var(--muted); font-size:12px; margin-top:2px; overflow-wrap:anywhere; }
-.icons { display:flex; gap:6px; margin-top:6px; }
-svg.icon { width:22px; height:22px; fill:currentColor; }
-.db { margin:0 0 3px; overflow-wrap:anywhere; }
-.db b { font-weight:600; }
-details { display:inline; }
-summary { display:inline; cursor:pointer; color:var(--muted); list-style:none; }
-summary::-webkit-details-marker { display:none; }
-details[open] summary { display:none; }
+th { text-align:left; font-size:12px; font-weight:600; color:var(--muted); text-transform:uppercase;
+     letter-spacing:.04em; padding:8px 10px; border-bottom:1px solid var(--line); }
+td { vertical-align:top; padding:12px 10px; border-bottom:1px solid var(--line); }
+td.rank { color:var(--faint); width:1%; font-variant-numeric:tabular-nums; }
+td.comp { width:26%; }
+td.dist { width:15%; }
+.formula { font-size:15px; font-weight:600; }
+.norm { color:var(--muted); font-size:12px; margin-top:2px; overflow-wrap:anywhere; }
+.dval { font-variant-numeric:tabular-nums; font-weight:600; }
+.bar { height:4px; background:var(--line); border-radius:2px; margin:6px 0 2px; max-width:120px; }
+.bar span { display:block; height:100%; background:var(--accent); border-radius:2px; }
+.dnote { color:var(--muted); font-size:12px; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; }
+.chip { display:inline-flex; align-items:center; gap:6px; padding:3px 9px; border-radius:6px;
+        border:1px solid; font-size:13px; text-decoration:none; white-space:nowrap; }
+a.chip:hover, a.chip:focus-visible { filter:brightness(.95); text-decoration:underline; outline:none; }
+.chip .n { font-size:11px; font-weight:600; padding:0 6px; border-radius:999px; background:#ffffff; }
+.chip.exp_struct { color:var(--exp_struct); background:var(--exp_struct-bg); border-color:var(--exp_struct-line); }
+.chip.exp_prop { color:var(--exp_prop); background:var(--exp_prop-bg); border-color:var(--exp_prop-line); }
+.chip.computed { color:var(--computed); background:var(--computed-bg); border-color:var(--computed-line); }
+details.ids { margin-top:8px; font-size:12px; }
+details.ids summary { cursor:pointer; color:var(--accent); width:max-content; }
+details.ids .idlist { margin:6px 0 0; padding:8px 10px; background:var(--soft); border-radius:6px;
+                     max-height:240px; overflow:auto; }
+details.ids p { margin:0 0 6px; overflow-wrap:anywhere; }
+details.ids p:last-child { margin:0; }
+details.ids b { color:var(--muted); font-weight:600; margin-right:6px; }
 .empty { color:var(--muted); padding:16px 0; }
-section.query { margin:0 0 28px; }
-section.query h2 { font-size:16px; margin:0 0 6px; }
-.error { color:#c4320a; }
+#tip { position:fixed; z-index:10; display:none; max-width:340px; padding:10px 12px; background:#ffffff;
+       border:1px solid var(--line); border-radius:8px; box-shadow:0 6px 24px rgba(0,0,0,.12);
+       font-size:12px; color:var(--text); pointer-events:none; }
+#tip b { font-size:13px; }
+#tip .kind { margin:2px 0 6px; font-weight:600; }
+#tip .desc { color:var(--muted); margin:0 0 6px; }
+#tip .foot { color:var(--faint); }
+section.query { margin:28px 0 0; padding-top:4px; }
+section.query .head { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 10px; margin-bottom:8px; }
+.overview td { padding:8px 10px; }
+.overview a { color:var(--accent); text-decoration:none; }
+.overview a:hover { text-decoration:underline; }
+.error { color:#b42318; }
+.note { color:var(--muted); font-size:12px; margin:8px 0 0; }
+"""
+
+# A single floating card describes the hovered or focused database chip.
+SCRIPT = """
+(function () {
+  var info = JSON.parse(document.getElementById("db-info").textContent);
+  var tip = document.getElementById("tip");
+  function esc(s) { var d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+  function show(chip) {
+    var db = info[chip.dataset.db]; if (!db) return;
+    var n = chip.dataset.n;
+    tip.innerHTML = "<b>" + esc(db.name) + "</b>" +
+      '<div class="kind" style="color:var(--' + db.kind + ')">' + esc(db.kind_label) + "</div>" +
+      (db.description ? '<p class="desc">' + esc(db.description) + "</p>" : "") +
+      '<div class="foot">' + n + (n === "1" ? " record" : " records") + " for this composition" +
+      (db.host ? " · click to open " + esc(db.host) + " \\u2197" : "") + "</div>";
+    tip.style.display = "block";
+    var r = chip.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+    var left = Math.min(Math.max(8, r.left), window.innerWidth - w - 8);
+    var top = r.bottom + 6;
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 6);
+    tip.style.left = left + "px"; tip.style.top = top + "px";
+  }
+  function hide() { tip.style.display = "none"; }
+  document.querySelectorAll(".chip").forEach(function (chip) {
+    chip.addEventListener("mouseenter", function () { show(chip); });
+    chip.addEventListener("focus", function () { show(chip); });
+    chip.addEventListener("mouseleave", hide);
+    chip.addEventListener("blur", hide);
+  });
+  window.addEventListener("scroll", hide, true);
+})();
 """
 
 
@@ -84,56 +132,89 @@ def subscript(formula: str) -> str:
     return re.sub(r"(\d+\.?\d*|\.\d+)", r"<sub>\1</sub>", escape(formula, quote=False))
 
 
-def _icon(k: str) -> str:
-    title = next(label for key, label, _ in KINDS if key == k)
-    colour = next(c for key, _, c in KINDS if key == k)
-    return (f'<svg class="icon" viewBox="0 0 24 24" style="color:{colour}" role="img">'
-            f'<title>{escape(title)}</title>{ICONS[k]}</svg>')
+def tidy(formula: str) -> str:
+    """Drop unit amounts as chemists write formulas: Li1Fe1P1O4 -> LiFePO4."""
+    return re.sub(r"(?<=[A-Za-z)\]])1(?![\d.])", "", formula)
 
 
-def _ids(ids: list) -> str:
-    ids = [escape(str(i)) for i in ids]
-    shown = ", ".join(ids[:IDS_SHOWN])
-    if len(ids) <= IDS_SHOWN:
-        return shown
-    return (f'{shown}<details><summary> … +{len(ids) - IDS_SHOWN} more</summary>, '
-            f'{", ".join(ids[IDS_SHOWN:])}</details>')
+def normalised(formula: str) -> str:
+    """ElMD's fractional formula, with amounts it rounds to "0." shown as <0.001."""
+    return re.sub(r"(?<=[A-Za-z])0\.(?=\s|$)", "<0.001", formula)
 
 
-def _rows(neighbours: list[dict], databases: dict[str, dict]) -> str:
-    rows = []
-    for rank, n in enumerate(neighbours, start=1):
-        kinds = sorted({kind(databases.get(db)) for db, _ in n["records"]}, key=KIND_ORDER.get)
-        reported = ""
-        if n["formula"] != n["normalised_formula"]:
-            reported = f'<div class="reported">reported as {subscript(n["formula"])}</div>'
-        dbs = []
-        for db, ids in n["records"]:
-            meta = databases.get(db, {})
-            colour = dict((k, c) for k, _, c in KINDS)[kind(meta)]
-            name = escape(meta.get("display") or db)
-            title = escape(meta.get("description") or db)
-            dbs.append(f'<div class="db"><b style="color:{colour}" title="{title}">{name}</b>: {_ids(ids)}</div>')
-        rows.append(
-            f'<tr><td class="rank">{rank}</td>'
-            f'<td class="comp"><div class="formula">{subscript(n["normalised_formula"])}</div>{reported}'
-            f'<div class="icons">{"".join(_icon(k) for k in kinds)}</div></td>'
-            f'<td>{"".join(dbs)}</td>'
-            f'<td class="dist">{n["distance"]:.3f}</td></tr>'
-        )
-    return "".join(rows)
+def _db_info(databases: dict[str, dict]) -> str:
+    info = {}
+    for name, meta in databases.items():
+        url = meta.get("url") or ""
+        k = kind(meta)
+        info[name] = {
+            "name": meta.get("display") or name,
+            "kind": k,
+            "kind_label": KINDS[k][1],
+            "description": (meta.get("description") or "").strip(),
+            "host": urlparse(url).netloc if url.startswith(("http://", "https://")) else "",
+        }
+    # Safe inside <script>: no "</" can close the element early
+    return json.dumps(info).replace("</", "<\\/")
+
+
+def _chip(db: str, ids: list, databases: dict[str, dict]) -> str:
+    meta = databases.get(db, {})
+    url = meta.get("url") or ""
+    name = escape(meta.get("display") or db)
+    attrs = f'class="chip {kind(meta)}" data-db="{escape(db)}" data-n="{len(ids)}"'
+    body = f'{name}<span class="n">{len(ids):,}</span>'
+    if url.startswith(("http://", "https://")):
+        return (f'<a {attrs} href="{escape(url)}" target="_blank" '
+                f'rel="noopener noreferrer">{body}</a>')
+    return f'<span {attrs} tabindex="0">{body}</span>'
+
+
+def _ids(records: list, databases: dict[str, dict]) -> str:
+    total = sum(len(ids) for _, ids in records)
+    if not total:
+        return ""
+    rows = "".join(
+        f'<p><b>{escape(databases.get(db, {}).get("display") or db)}</b>'
+        f'{escape(", ".join(map(str, ids)))}</p>'
+        for db, ids in records)
+    label = f"Show {total:,} record ID{'s' if total != 1 else ''}"
+    return f'<details class="ids"><summary>{label}</summary><div class="idlist">{rows}</div></details>'
+
+
+def _distance(d: float, longest: float) -> str:
+    width = 0 if longest <= 0 else min(100, 100 * d / longest)
+    note = '<div class="dnote">identical</div>' if d == 0 else ""
+    return (f'<div class="dval">{d:.3f}</div>'
+            f'<div class="bar"><span style="width:{width:.1f}%"></span></div>{note}')
 
 
 def _table(neighbours: list[dict], databases: dict[str, dict]) -> str:
     if not neighbours:
         return '<p class="empty">No compositions match these filters.</p>'
-    return ('<table><thead><tr><th>#</th><th>Composition</th><th>Database: matched IDs</th>'
-            f'<th>Distance</th></tr></thead><tbody>{_rows(neighbours, databases)}</tbody></table>')
+    longest = max(n["distance"] for n in neighbours)
+    rows = []
+    for rank, n in enumerate(neighbours, start=1):
+        formula = tidy(n["formula"])
+        norm = ""
+        if formula != n["normalised_formula"]:
+            norm = f'<div class="norm">{escape(normalised(n["normalised_formula"]))}</div>'
+        chips = "".join(_chip(db, ids, databases) for db, ids in n["records"])
+        rows.append(
+            f'<tr><td class="rank">{rank}</td>'
+            f'<td class="comp"><div class="formula">{subscript(formula)}</div>{norm}</td>'
+            f'<td class="dist">{_distance(n["distance"], longest)}</td>'
+            f'<td><div class="chips">{chips}</div>{_ids(n["records"], databases)}</td></tr>'
+        )
+    return ('<table><thead><tr><th>#</th><th>Composition</th><th>Distance</th>'
+            f'<th>Reported in</th></tr></thead><tbody>{"".join(rows)}</tbody></table>')
 
 
-def _legend() -> str:
-    return '<div class="legend">' + "".join(
-        f"<span>{_icon(k)}{escape(label)}</span>" for k, label, _ in KINDS) + "</div>"
+def _key() -> str:
+    kinds = "".join(f'<span><span class="dot" style="background:var(--{k})"></span>{escape(label)}</span>'
+                    for k, (label, _) in KINDS.items())
+    return (f'<div class="key">{kinds}<span>Distance: Element Movers Distance, '
+            "0 = identical composition · hover a database for details, click to open it</span></div>")
 
 
 def _filters(filters: dict | None) -> str:
@@ -141,52 +222,76 @@ def _filters(filters: dict | None) -> str:
         return ""
     parts = []
     if filters.get("must_contain"):
-        parts.append("must contain " + ", ".join(sorted(filters["must_contain"])))
+        parts.append("contains " + ", ".join(sorted(filters["must_contain"])))
     if filters.get("must_exclude"):
-        parts.append("must exclude " + ", ".join(sorted(filters["must_exclude"])))
+        parts.append("excludes " + ", ".join(sorted(filters["must_exclude"])))
     if filters.get("experimental"):
         parts.append("experimental databases only")
     if filters.get("structures"):
         parts.append("databases with structures only")
-    return f'<p class="filters">Filters: {escape("; ".join(parts))}</p>'
+    return '<div class="filters">' + "".join(
+        f'<span class="filter">{escape(p)}</span>' for p in parts) + "</div>"
 
 
-def _searched(stats: dict) -> str:
-    text = f"Searched {stats['compositions']:,} unique compositions"
+def _scope(stats: dict) -> str:
+    text = f"{stats['compositions']:,} compositions from {stats['databases']:,} database"
+    text += "s" if stats["databases"] != 1 else ""
     if stats.get("records"):
-        text += f" across {stats['records']:,} records"
+        text += f" ({stats['records']:,} records)"
     return text
 
 
-def _page(title: str, body: str) -> str:
+def _page(title: str, body: str, databases: dict[str, dict]) -> str:
     return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width, initial-scale=1">'
-            f'<title>{escape(title)}</title><style>{STYLE}</style></head><body>{body}</body></html>')
+            f'<meta name="color-scheme" content="light">'
+            f'<title>{escape(title)}</title><style>{STYLE}</style></head><body>{body}'
+            f'<div id="tip" role="tooltip"></div>'
+            f'<script type="application/json" id="db-info">{_db_info(databases)}</script>'
+            f'<script>{SCRIPT}</script></body></html>')
 
 
 def instance_page(result: dict, filters: dict | None, stats: dict, databases: dict[str, dict]) -> str:
-    summary = (f'<p class="summary">{_searched(stats)} for '
-               f'<b>{subscript(result["query"])}</b> in {result["seconds"]:.3f} s</p>')
-    return _page("ElMTree results",
-                 summary + _filters(filters) + _legend() + _table(result["neighbours"], databases))
+    matches = len(result["neighbours"])
+    head = (f'<h1>Compositions most similar to {subscript(result["input"])}</h1>'
+            f'<p class="meta">Compared as {escape(result["query"])} · '
+            f'{matches:,} closest of {_scope(stats)} · {result["seconds"] * 1000:.0f} ms</p>'
+            + _filters(filters))
+    return _page("ElMTree results", head + _key() + _table(result["neighbours"], databases), databases)
 
 
 def dataset_page(queries: list[dict], filters: dict | None, stats: dict,
                  databases: dict[str, dict], max_queries: int) -> str:
     """queries: [{"row", "query", "result" or "error"}]"""
     shown = queries[:max_queries]
-    head = f'<p class="summary">{_searched(stats)} for {len(queries):,} queries</p>' + _filters(filters)
+    failed = sum("error" in q for q in queries)
+    head = (f'<h1>Nearest compositions for {len(queries):,} '
+            f'quer{"ies" if len(queries) != 1 else "y"}</h1>'
+            f'<p class="meta">Searched {_scope(stats)}'
+            + (f' · {failed:,} could not be read' if failed else "") + "</p>" + _filters(filters))
     if len(queries) > len(shown):
         head += (f'<p class="note">Showing the first {len(shown):,} queries; '
                  "neighbours.csv has them all.</p>")
-    sections = []
+
+    overview, sections = [], []
     for q in shown:
-        title = f'{q["row"] + 1}. {escape(str(q["query"]), quote=False)}'
+        anchor = f'q{q["row"] + 1}'
+        query = escape(str(q["query"]), quote=False)
         if "error" in q:
-            sections.append(f'<section class="query"><h2>{title}</h2>'
-                            f'<p class="error">{escape(q["error"])}</p></section>')
-        else:
-            title += f' <span class="filters">→ {subscript(q["result"]["query"])}</span>'
-            sections.append(f'<section class="query"><h2>{title}</h2>'
-                            f'{_table(q["result"]["neighbours"], databases)}</section>')
-    return _page("ElMTree results", head + _legend() + "".join(sections))
+            overview.append(f'<tr><td class="rank">{q["row"] + 1}</td><td>{query}</td>'
+                            f'<td colspan="2" class="error">{escape(q["error"])}</td></tr>')
+            continue
+        neighbours = q["result"]["neighbours"]
+        nearest = (f'{subscript(tidy(neighbours[0]["formula"]))}</td><td>{neighbours[0]["distance"]:.3f}'
+                   if neighbours else '<span class="meta">no matches</span></td><td>')
+        overview.append(f'<tr><td class="rank">{q["row"] + 1}</td>'
+                        f'<td><a href="#{anchor}">{subscript(str(q["query"]))}</a></td>'
+                        f'<td>{nearest}</td></tr>')
+        sections.append(
+            f'<section class="query" id="{anchor}"><div class="head">'
+            f'<h2>{q["row"] + 1}. {subscript(str(q["query"]))}</h2>'
+            f'<span class="meta">compared as {escape(q["result"]["query"])}</span></div>'
+            f'{_table(neighbours, databases)}</section>')
+    table = ('<table class="overview"><thead><tr><th>#</th><th>Query</th><th>Nearest match</th>'
+             f'<th>Distance</th></tr></thead><tbody>{"".join(overview)}</tbody></table>')
+    return _page("ElMTree results", head + _key() + table + "".join(sections), databases)

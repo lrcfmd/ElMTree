@@ -185,11 +185,12 @@ class ElMTreeSearchModel:
                 "databases": self._databases(records),
                 "records": list(records.items()),
             })
-        return {"query": query.pretty_formula, "neighbours": neighbours,
-                "seconds": time.perf_counter() - started}
+        return {"input": composition.strip(), "query": query.pretty_formula,
+                "neighbours": neighbours, "seconds": time.perf_counter() - started}
 
     def _stats(self) -> dict:
-        return {"compositions": len(self.index), "records": self.index.n_records}
+        return {"compositions": len(self.index), "records": self.index.n_records,
+                "databases": len(self.index.databases)}
 
     @staticmethod
     def _presented(n: dict) -> dict:

@@ -116,21 +116,36 @@ def test_instance_results_page(model, tmp_path) -> None:
                   {}, tmp_path, {}, LOG)
     page = (tmp_path / "elmtree_results.html").read_text()
     assert page.startswith("<!doctype html>")
-    assert "for <b>Fe<sub>0.4</sub> O<sub>0.6</sub></b>" in page
-    assert "Filters: must contain O" in page
+    assert "Compositions most similar to Fe<sub>2</sub>O<sub>3</sub>" in page
+    assert "Compared as Fe0.4 O0.6" in page
+    assert '<span class="filter">contains O</span>' in page
     assert page.count('<td class="rank">') == 12
-    assert "Experimental structures reported" in page  # legend
-    assert "http" not in page  # self-contained: the frontend sandboxes it
+    assert "prefers-color-scheme" not in page  # light only
+    assert "<link" not in page and "<script src" not in page  # self-contained
 
 
-def test_results_page_folds_long_id_lists() -> None:
-    n = {"formula": "NaCl", "normalised_formula": "Na0.5 Cl0.5", "distance": 0.0,
-         "records": [("icsd", list(range(20)))]}
-    page = report.instance_page({"query": "Na0.5 Cl0.5", "neighbours": [n], "seconds": 0.01},
-                                None, {"compositions": 1, "records": 20}, {})
-    assert "0, 1, 2, 3, 4, 5, 6, 7<details><summary> … +12 more</summary>, 8, 9" in page
+def test_results_page_details() -> None:
+    n = {"formula": "Na1Cl1", "normalised_formula": "Na0.5 Cl0.5", "distance": 0.0,
+         "records": [("icsd", list(range(20))), ("local", ["a"])]}
+    databases = {"icsd": {"display": "ICSD", "description": "Crystal structures </script>",
+                          "experimental": True, "structures": True,
+                          "url": "https://icsd.fiz-karlsruhe.de/index.xhtml"}}
+    result = {"input": "NaCl", "query": "Na0.5 Cl0.5", "neighbours": [n], "seconds": 0.01}
+    page = report.instance_page(result, None,
+                                {"compositions": 1, "records": 21, "databases": 2}, databases)
+    # a known database links to its site; one without a URL is a plain chip
+    assert ('<a class="chip exp_struct" data-db="icsd" data-n="20" '
+            'href="https://icsd.fiz-karlsruhe.de/index.xhtml" target="_blank"') in page
+    assert '<span class="chip computed" data-db="local" data-n="1" tabindex="0">' in page
+    # hover info is embedded safely
+    assert '"description": "Crystal structures <\\/script>"' in page
+    assert '"host": "icsd.fiz-karlsruhe.de"' in page
+    assert "<summary>Show 21 record IDs</summary>" in page
+    assert '<div class="formula">NaCl</div>' in page and "identical" in page
     assert report.subscript("Li(Fe0.97Mn0.03)(PO4)") == \
         "Li(Fe<sub>0.97</sub>Mn<sub>0.03</sub>)(PO<sub>4</sub>)"
+    assert report.tidy("Li1Fe1P1O4") == "LiFePO4" and report.tidy("Sr10Co1O3") == "Sr10CoO3"
+    assert report.normalised("Cu0. Fe0.4 O0.6") == "Cu<0.001 Fe0.4 O0.6"
 
 
 def test_instance_default_k(model, tmp_path) -> None:
@@ -279,7 +294,7 @@ def test_convert_index(tmp_path, monkeypatch) -> None:
 
     model.process("instance", {"composition": "NaCl", "k": 4}, {}, tmp_path / "o", {}, LOG)
     page = (tmp_path / "o" / "elmtree_results.html").read_text()
-    assert "Searched 4 unique compositions across 7 records" in page
+    assert "4 closest of 4 compositions from 4 databases (7 records)" in page
     assert page.index(">ICSD<") < page.index(">MPDS Structural Database<") < page.index(">aflow<")
 
 
@@ -329,8 +344,9 @@ def test_dataset_bad_rows_do_not_abort(model, tmp_path) -> None:
     assert len(by_query["2"]) == 1 and by_query["2"][0]["error"] != ""
     assert len(by_query["3"]) == 2 and by_query["3"][0]["error"] == ""
     page = (out / "elmtree_results.html").read_text()
-    assert page.count('<section class="query">') == 4
-    assert "Unknown element" in page and page.count('<td class="rank">') == 4
+    assert page.count('<section class="query" id=') == 2  # one per query that ran
+    assert '<a href="#q4">GaAs</a>' in page
+    assert "Unknown element" in page
 
 
 def test_dataset_missing_column(model, tmp_path) -> None:
