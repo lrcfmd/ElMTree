@@ -19,7 +19,7 @@ class InstanceInputs(TypedDict, total=False):
     structures_only: bool  # default: False
 
 class DatasetInputs(TypedDict, total=False):
-    # CSV file with a 'composition' column of chemical formulas
+    # CSV file with a header row and a 'composition' column; each row is one query formula (other columns are ignored)
     file: tuple[Path, str]
     # Number of nearest neighbours per query (1-1000)
     k: int  # default: 10

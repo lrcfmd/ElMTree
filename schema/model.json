@@ -28,6 +28,8 @@
           "k": {
             "type": "integer",
             "default": 100,
+            "minimum": 1,
+            "maximum": 1000,
             "description": "Number of nearest neighbours to return (1-1000)"
           },
           "must_contain": {
@@ -95,11 +97,23 @@
             "type": "file",
             "mime_type": "text/csv",
             "required": true,
-            "description": "CSV file with a 'composition' column of chemical formulas"
+            "description": "CSV file with a header row and a 'composition' column; each row is one query formula (other columns are ignored)",
+            "header": true,
+            "columns": [
+              {
+                "name": "composition",
+                "description": "Chemical formula to search for, e.g. LiFePO4",
+                "type": "string",
+                "required": true
+              }
+            ],
+            "example": "composition\nNaCl\nLiFePO4\nFe2O3\nBi2Te3\n"
           },
           "k": {
             "type": "integer",
             "default": 10,
+            "minimum": 1,
+            "maximum": 1000,
             "description": "Number of nearest neighbours per query (1-1000)"
           },
           "must_contain": {

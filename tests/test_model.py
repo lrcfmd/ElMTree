@@ -1,4 +1,5 @@
 import csv
+import json
 import pickle
 import random
 import sqlite3
@@ -8,6 +9,7 @@ import pytest
 from ElMD import ElMD
 
 from ElMTree import ElMTree
+from infrastructure.handler import InputError
 from infrastructure.logging import newLogger
 from model.build_index import main as build_index
 from model.convert_index import main as convert_index
@@ -173,15 +175,17 @@ def test_filters_excluding_everything(model, tmp_path) -> None:
 
 
 @pytest.mark.parametrize("bad, match", [
-    ("", "non-empty"),
-    ("   ", "non-empty"),
-    ("nacl", "Could not parse"),
-    ("Xx2O", "Unknown element"),     # ElMD would silently search for pure O
+    ("", "composition is empty"),
+    ("   ", "composition is empty"),
+    (42, "composition is empty"),
+    ("nacl", "Could not parse 'nacl'.*capital first letter"),
+    ("Xx2O", "Unknown element.*Xx"),     # ElMD would silently search for pure O
     ("NotAnElement", "Unknown element"),
-    (42, "non-empty"),
+    ("Na(Cl", "brackets do not match"),  # ElMD's own error, made plain
+    ("Fe2O3x", "amount is not a number"),
 ])
 def test_invalid_composition(model, bad, match) -> None:
-    with pytest.raises(ValueError, match=match):
+    with pytest.raises(InputError, match=match):
         model.process("instance", {"composition": bad}, {}, Path("/tmp/elm_out"), {}, LOG)
 
 
@@ -193,12 +197,12 @@ def test_invalid_composition(model, bad, match) -> None:
     ({"must_contain": ["O"], "must_exclude": ["O"]}, "both"),
 ])
 def test_invalid_options(model, values, match) -> None:
-    with pytest.raises(ValueError, match=match):
+    with pytest.raises(InputError, match=match):
         model.process("instance", {"composition": "NaCl", **values}, {}, Path("/tmp/elm_out"), {}, LOG)
 
 
 def test_instance_missing_composition(model) -> None:
-    with pytest.raises(ValueError, match="No composition"):
+    with pytest.raises(InputError, match="No composition"):
         model.process("instance", {}, {}, Path("/tmp/elm_out"), {}, LOG)
 
 
@@ -348,15 +352,77 @@ def test_dataset_bad_rows_do_not_abort(model, tmp_path) -> None:
 def test_dataset_missing_column(model, tmp_path) -> None:
     src = tmp_path / "in.csv"
     src.write_text("formula\nNaCl\n")
-    with pytest.raises(ValueError, match="'composition' column"):
+    with pytest.raises(InputError, match="'composition' column.*found: 'formula'"):
         model.process("dataset", {}, {"file": (src, "text/csv")}, tmp_path / "o", {}, LOG)
 
 
 def test_dataset_no_file(model) -> None:
-    with pytest.raises(ValueError, match="No input file"):
+    with pytest.raises(InputError, match="No input file"):
         model.process("dataset", {}, {}, Path("/tmp/elm_out"), {}, LOG)
 
 
 def test_unknown_mode(model) -> None:
     with pytest.raises(ValueError, match="Unknown mode"):
         model.process("bogus", {}, {}, Path("/tmp/elm_out"), {}, LOG)
+
+
+@pytest.mark.parametrize("content, match", [
+    (b"", "CSV is empty"),
+    (b"composition\n", "no rows"),
+    (b"\xff\xfec\x00o\x00", "not a text CSV"),
+    (b'composition\nNaCl\n"unterminated\n', "Could not read the input CSV"),
+    (b"NaCl\nKCl\n", "first row must name the columns"),  # no header row
+])
+def test_dataset_unreadable_csv(tmp_path, monkeypatch, content, match) -> None:
+    # Checked before the index is loaded, so no index is needed.
+    monkeypatch.setenv("MODEL_ARTIFACTS_DIR", str(tmp_path))
+    src = tmp_path / "in.csv"
+    src.write_bytes(content)
+    with pytest.raises(InputError, match=match):
+        ElMTreeSearchModel().process("dataset", {}, {"file": (src, "text/csv")}, tmp_path / "o", {}, LOG)
+
+
+def test_dataset_no_valid_rows(tmp_path, monkeypatch) -> None:
+    # Every row bad: one message naming the rows (as spreadsheet rows), before
+    # the index is loaded.
+    monkeypatch.setenv("MODEL_ARTIFACTS_DIR", str(tmp_path))
+    src = tmp_path / "in.csv"
+    src.write_text("id,composition\n1,Xx2O\n2,\n3,nacl\n4,Na(Cl\n5,Q\n6,Zz\n7,Yb(\n")
+    with pytest.raises(InputError) as e:
+        ElMTreeSearchModel().process("dataset", {}, {"file": (src, "text/csv")}, tmp_path / "o", {}, LOG)
+    message = str(e.value)
+    assert message.startswith("None of the compositions in the CSV could be read: row 2: Unknown element(s) Xx")
+    assert "row 3: The composition is empty" in message
+    assert "row 5: Could not parse 'Na(Cl'" in message
+    assert "row 7" not in message and "and 2 more" in message
+
+
+def test_dataset_options_checked_before_reading(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("MODEL_ARTIFACTS_DIR", str(tmp_path))
+    src = tmp_path / "in.csv"
+    src.write_text("composition\nNaCl\n")
+    for values, match in [({"k": 0}, "k must be"), ({"must_exclude": ["fe"]}, "unknown element")]:
+        with pytest.raises(InputError, match=match):
+            ElMTreeSearchModel().process("dataset", values, {"file": (src, "text/csv")}, tmp_path / "o", {}, LOG)
+
+
+def test_dataset_row_with_extra_cells_keeps_its_composition(model, tmp_path) -> None:
+    src = tmp_path / "in.csv"
+    src.write_text("composition\nNaCl,1,2\nKCl\n")
+    out = tmp_path / "output"
+    model.process("dataset", {"k": 1}, {"file": (src, "text/csv")}, out, {}, LOG)
+    assert [r["query"] for r in _neighbours_csv(out)] == ["NaCl", "KCl"]
+
+
+def test_schema_csv_example_runs(model, tmp_path) -> None:
+    field = json.loads((ROOT / "schema" / "model.json").read_text())[
+        "execution"]["modes"]["dataset"]["inputs"]["file"]
+    src = tmp_path / "example.csv"
+    src.write_text(field["example"])
+    names = [c["name"] for c in field["columns"]]
+    with src.open() as f:
+        assert set(names) <= set(next(csv.reader(f)))
+    out = tmp_path / "output"
+    model.process("dataset", {"k": 2}, {"file": (src, "text/csv")}, out, {}, LOG)
+    rows = _neighbours_csv(out)
+    assert len(rows) == 2 * 4 and all(r["error"] == "" for r in rows)
